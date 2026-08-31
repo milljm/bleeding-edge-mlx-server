@@ -169,6 +169,7 @@ def _describe(
         "engine": engine,
         "size": _human_size(size),
         "quant": quant,
+        "context": _infer_context(cfg),
         "watchDir": typed_dir,
         "source": "scan",
     }
@@ -249,6 +250,35 @@ def _infer_engine(cfg: dict[str, Any], repo: str, folder: str) -> str:
     if any(marker in blob for marker in VLM_MARKERS):
         return "vlm"
     return "lm"
+
+
+CONTEXT_KEYS = (
+    "max_position_embeddings",
+    "max_sequence_length",
+    "max_seq_len",
+    "n_positions",
+    "seq_length",
+    "model_max_length",
+    "max_length",
+)
+
+
+def _infer_context(cfg: dict[str, Any], depth: int = 0) -> int | None:
+    if depth > 3 or not isinstance(cfg, dict):
+        return None
+    for key in CONTEXT_KEYS:
+        value = cfg.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and int(value) > 0:
+            return int(value)
+    for nested_key in ("text_config", "llm_config", "language_config", "decoder"):
+        nested = cfg.get(nested_key)
+        if isinstance(nested, dict):
+            found = _infer_context(nested, depth + 1)
+            if found:
+                return found
+    return None
 
 
 def _infer_quant(cfg: dict[str, Any], path: Path, repo: str) -> str:

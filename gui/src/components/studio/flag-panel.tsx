@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { engineLabel } from "@/lib/command";
 import { modelIsLive } from "@/lib/edge-api";
 import { flagsDirty, flagsFor, type FlagDef, type FlagGroup } from "@/lib/flags";
+import { formatContext } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 
 const GROUP_LABEL: Record<FlagGroup, string> = {
@@ -43,7 +44,9 @@ export function FlagPanel() {
         <div>
           <h2 className="text-lg font-medium tracking-tight">Engine switches</h2>
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-            These map 1:1 onto {engineLabel(model.engine)} flags. Serve passes them through mlx-edge.
+            Settings for {model.name} only — they stick when you close Edge.
+            {formatContext(model.context) ? ` Context window ${formatContext(model.context)}.` : ""}{" "}
+            These map 1:1 onto {engineLabel(model.engine)} flags.
             {live
               ? dirty
                 ? " Flags changed on a running model — Reload to apply them."

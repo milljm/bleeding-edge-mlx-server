@@ -45,6 +45,20 @@ class ScanTests(unittest.TestCase):
             self.assertTrue(repos["mlx-community/Qwen3-8B-4bit"]["path"].endswith("Qwen3-8B-4bit"))
             self.assertEqual(repos["mlx-community/Qwen3-8B-4bit"]["id"], "lm-mlx-community-qwen3-8b-4bit")
 
+    def test_reads_context_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "org" / "Big-32k"
+            path.mkdir(parents=True)
+            (path / "config.json").write_text(
+                json.dumps({"model_type": "qwen3", "max_position_embeddings": 32768}),
+                encoding="utf-8",
+            )
+            (path / "model.safetensors").write_bytes(b"w")
+            models = list_models(str(root))
+            self.assertEqual(models[0]["context"], 32768)
+
+
     def test_hub_cache_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             hub = Path(tmp) / "models--mlx-community--Llama-3.2-3B-Instruct-4bit"

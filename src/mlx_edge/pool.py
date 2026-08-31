@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 from mlx_edge.engines import get_engine
@@ -37,6 +38,54 @@ def strip_bind_args(extra: list[str]) -> list[str]:
     return out
 
 
+def normalize_name(name: str) -> str:
+    return name.strip().replace("\\", "/").rstrip("/").lower()
+
+
+def basename_id(path: str) -> str:
+    name = Path(path.replace("\\", "/").rstrip("/")).name
+    return name or path
+
+
+def unique_public_id(path: str, taken: list[str]) -> str:
+    taken_n = {normalize_name(t) for t in taken if t}
+    base = basename_id(path)
+    if normalize_name(base) not in taken_n:
+        return base
+    parent = Path(path.replace("\\", "/")).parent.name
+    candidate = f"{parent}/{base}" if parent else base
+    if normalize_name(candidate) not in taken_n:
+        return candidate
+    return path
+
+
+def names_for(item: "LoadedModel") -> list[str]:
+    out = [item.id, item.model, item.public_id, basename_id(item.model), basename_id(item.public_id)]
+    return [n for n in out if n]
+
+
+def names_match(left: str, right: str) -> bool:
+    a = normalize_name(left)
+    b = normalize_name(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if a.endswith("/" + b) or b.endswith("/" + a):
+        return True
+    return a.split("/")[-1] == b.split("/")[-1]
+
+
+def server_argv(engine_id: str) -> list[str]:
+    """Prefer `python -m mlx_lm server` — `python -m mlx_lm.server` is deprecated."""
+    engine = get_engine(engine_id)
+    if not engine.server_module:
+        raise RuntimeError(f"{engine.dist} has no server")
+    if engine.id == "lm":
+        return [sys.executable, "-m", "mlx_lm", "server"]
+    return [sys.executable, "-m", engine.server_module]
+
+
 @dataclass
 class LoadedModel:
     id: str
@@ -46,10 +95,17 @@ class LoadedModel:
     started_at: float
     proc: subprocess.Popen[bytes] | None = None
     args: list[str] = field(default_factory=list)
+    public_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.public_id:
+            self.public_id = basename_id(self.model)
+        if self.id == self.model:
+            self.id = self.public_id
 
     def as_openai(self) -> dict[str, object]:
         return {
-            "id": self.model,
+            "id": self.public_id,
             "object": "model",
             "created": int(self.started_at),
             "owned_by": "mlx-vlm" if self.engine == "vlm" else "mlx-lm",
@@ -60,13 +116,8 @@ SpawnFn = Callable[[str, str, int, list[str]], subprocess.Popen[bytes] | None]
 
 
 def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> subprocess.Popen[bytes]:
-    engine = get_engine(engine_id)
-    if not engine.server_module:
-        raise RuntimeError(f"{engine.dist} has no server")
     cmd = [
-        sys.executable,
-        "-m",
-        engine.server_module,
+        *server_argv(engine_id),
         "--model",
         model,
         "--host",
@@ -79,7 +130,7 @@ def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> su
 
 
 class ModelPool:
-    def __init__(self, spawn: SpawnFn | None = None, wait: Callable[[int], None] | None = None) -> None:
+    def __init__(self, spawn: SpawnFn | None = None, wait: Callable[..., None] | None = None) -> None:
         self._models: dict[str, LoadedModel] = {}
         self._spawn = spawn or default_spawn
         self._wait = wait or wait_healthy
@@ -94,12 +145,8 @@ class ModelPool:
         if not name:
             return loaded[0]
         needle = name.strip()
-        if needle in self._models:
-            return self._models[needle]
         for item in loaded:
-            if item.model == needle or item.id == needle:
-                return item
-            if item.model.endswith("/" + needle) or item.model.endswith(needle):
+            if any(names_match(candidate, needle) for candidate in names_for(item)):
                 return item
         return None
 
@@ -110,25 +157,34 @@ class ModelPool:
             self.unload(existing.id)
         port = free_port()
         proc = self._spawn(engine, model, port, extra)
+        public_id = unique_public_id(model, [m.public_id for m in self.list()])
         item = LoadedModel(
-            id=model,
+            id=public_id,
             engine=engine,
             model=model,
             port=port,
             started_at=time.time(),
             proc=proc,
             args=extra,
+            public_id=public_id,
         )
         try:
-            self._wait(port)
+            self._call_wait(port, proc)
         except Exception as exc:
             code = proc.returncode if proc is not None else None
             self._kill(item)
+            label = item.public_id
             if code is not None:
-                raise RuntimeError(f"{model} exited with code {code}") from exc
-            raise
+                raise RuntimeError(f"{label} exited with code {code}") from exc
+            raise RuntimeError(f"{label} failed to start: {exc}") from exc
         self._models[item.id] = item
         return item
+
+    def _call_wait(self, port: int, proc: subprocess.Popen[bytes] | None) -> None:
+        try:
+            self._wait(port, proc)
+        except TypeError:
+            self._wait(port)
 
     def unload(self, name: str) -> LoadedModel | None:
         item = self.resolve(name)
@@ -153,7 +209,11 @@ class ModelPool:
             proc.kill()
 
 
-def wait_healthy(port: int, timeout: float = 600.0) -> None:
+def wait_healthy(
+    port: int,
+    proc: subprocess.Popen[bytes] | None = None,
+    timeout: float = 600.0,
+) -> None:
     urls = (
         f"http://127.0.0.1:{port}/health",
         f"http://127.0.0.1:{port}/v1/models",
@@ -161,6 +221,10 @@ def wait_healthy(port: int, timeout: float = 600.0) -> None:
     deadline = time.time() + timeout
     last: Exception | None = None
     while time.time() < deadline:
+        if proc is not None:
+            code = proc.poll()
+            if code is not None:
+                raise RuntimeError(f"engine exited with code {code}")
         for url in urls:
             try:
                 with urllib.request.urlopen(url, timeout=1.5) as resp:

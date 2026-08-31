@@ -32,17 +32,25 @@ export function openaiUrl(host = "127.0.0.1", port: number | string = 8080) {
 
 export function modelIsLive(
   served: ServedRuntime[],
-  model?: { id: string; repo: string; path?: string } | null,
+  model?: { id: string; repo: string; path?: string; name?: string } | null,
 ) {
   if (!model) return false;
-  const needles = [model.repo, model.id, model.path].filter((n): n is string => Boolean(n));
-  return served.some((s) => [s.repo, s.id].some((id) => needles.some((n) => sameModel(id, n))));
+  const needles = [model.repo, model.id, model.path, model.name].filter((n): n is string => Boolean(n));
+  return served.some((s) => [s.repo, s.id, s.name].some((id) => needles.some((n) => sameModel(id, n))));
 }
 
-function sameModel(a: string, b: string) {
+export function sameModel(a: string, b: string) {
   if (!a || !b) return false;
-  if (a === b) return true;
-  return a.endsWith(`/${b}`) || b.endsWith(`/${a}`);
+  const x = normalizeName(a);
+  const y = normalizeName(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (x.endsWith(`/${y}`) || y.endsWith(`/${x}`)) return true;
+  return x.split("/").pop() === y.split("/").pop();
+}
+
+function normalizeName(name: string) {
+  return name.trim().replace(/\\/g, "/").replace(/\/+$/g, "").toLowerCase();
 }
 
 async function parseJson(res: Response) {
@@ -94,6 +102,33 @@ export async function listServed(gateway: GatewayInfo): Promise<ServedRuntime[]>
       startedAt: (row.created ?? 0) * 1000,
     };
   });
+}
+
+export type StudioPrefs = {
+  watchDirs: string[];
+  flagsByModel: Record<string, FlagValues>;
+};
+
+export async function getPrefs(): Promise<StudioPrefs> {
+  const res = await fetch("/v1/prefs");
+  const body = (await parseJson(res)) as Partial<StudioPrefs>;
+  return {
+    watchDirs: Array.isArray(body.watchDirs) ? body.watchDirs.map(String) : [],
+    flagsByModel: body.flagsByModel && typeof body.flagsByModel === "object" ? body.flagsByModel : {},
+  };
+}
+
+export async function putPrefs(prefs: StudioPrefs): Promise<StudioPrefs> {
+  const res = await fetch("/v1/prefs", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(prefs),
+  });
+  const body = (await parseJson(res)) as Partial<StudioPrefs>;
+  return {
+    watchDirs: Array.isArray(body.watchDirs) ? body.watchDirs.map(String) : prefs.watchDirs,
+    flagsByModel: body.flagsByModel && typeof body.flagsByModel === "object" ? body.flagsByModel : prefs.flagsByModel,
+  };
 }
 
 export async function postLoad(input: { engine: EngineKind; model: string; args?: string[] }) {

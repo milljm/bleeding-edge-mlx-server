@@ -16,7 +16,7 @@ from mlx_edge.pool import LoadedModel, ModelPool
 CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, content-type",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 }
 
 STATIC_TYPES = {
@@ -140,7 +140,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             raw_path = urlparse(self.path).path
             path = raw_path.rstrip("/") or "/"
             if path == "/health":
-                models = [item.model for item in pool.list()]
+                models = [item.public_id for item in pool.list()]
                 bind_host, bind_port = self.server.server_address[:2]
                 info = public_base(str(bind_host), int(bind_port))
                 self._json({"status": "ok", "models": models, "model": models[0] if models else None, **info})
@@ -149,7 +149,19 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 data = [item.as_openai() for item in pool.list()]
                 self._json({"object": "list", "data": data})
                 return
+            if path in {"/v1/prefs", "/v1/studio"}:
+                from mlx_edge.prefs import load_prefs
+
+                self._json(load_prefs())
+                return
             if self._static(raw_path):
+                return
+            self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
+
+        def do_PUT(self) -> None:  # noqa: N802
+            path = urlparse(self.path).path.rstrip("/") or "/"
+            if path in {"/v1/prefs", "/v1/studio"}:
+                self._prefs_save()
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
 
@@ -163,6 +175,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 return
             if path in {"/v1/scan", "/v1/models/scan"}:
                 self._scan()
+                return
+            if path in {"/v1/prefs", "/v1/studio"}:
+                self._prefs_save()
                 return
             if path in {"/v1/chat/completions", "/v1/completions", "/chat/completions"}:
                 self._proxy()
@@ -189,7 +204,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             except Exception as exc:  # noqa: BLE001 — surface engine spawn errors
                 self._json({"error": {"message": str(exc), "type": "server_error"}}, 500)
                 return
-            self._json({"ok": True, "model": item.as_openai(), "models": [m.model for m in pool.list()]})
+            self._json({"ok": True, "model": item.as_openai(), "models": [m.public_id for m in pool.list()]})
 
         def _unload(self) -> None:
             try:
@@ -205,7 +220,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if not item:
                 self._json({"error": {"message": f"{name} is not loaded", "type": "invalid_request_error"}}, 404)
                 return
-            self._json({"ok": True, "model": item.model, "models": [m.model for m in pool.list()]})
+            self._json({"ok": True, "model": item.public_id, "models": [m.public_id for m in pool.list()]})
 
         def _scan(self) -> None:
             try:
@@ -223,6 +238,16 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
 
             self._json(scan_dirs(dirs))
 
+        def _prefs_save(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                return
+            from mlx_edge.prefs import save_prefs
+
+            self._json(save_prefs(body))
+
         def _proxy(self) -> None:
             loaded = pool.list()
             if not loaded:
@@ -239,7 +264,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             requested = body.get("model")
             item = pool.resolve(str(requested) if requested else None)
             if requested and not item:
-                available = ", ".join(m.model for m in loaded)
+                available = ", ".join(m.public_id for m in loaded)
                 self._json(
                     {
                         "error": {

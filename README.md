@@ -31,10 +31,11 @@ opens a browser. The footer shows the OpenAI base URL:
 Serving on http://127.0.0.1:8080/v1
 ```
 
-Point any OpenAI-compatible chat client at that address. Serve in the GUI hot-loads a model by calling `mlx-edge` (`POST /v1/load`). Unload drops only
-that one. The model list is a scan of folders you add under Watch — nothing is
-hard-coded, and no default directory is assumed. Change flags on a running model
-and **Reload** to apply them (`POST /v1/load` replaces that engine in the pool).
+Point any OpenAI-compatible chat client at that address. `GET /v1/models`
+lists each loaded engine by **basename** (`MiniMax-M2.7-ConfigI-MLX`), not the
+full disk path. Chat `model` may be that basename (any case), `org/name`, or
+the path. Watch folders and per-model settings persist in
+`~/.config/mlx-edge/studio.json`.
 
 Remote clients (another machine on the LAN):
 
@@ -134,8 +135,9 @@ mlx-edge serve --engine lm --model mlx-community/Qwen3-8B-4bit
 Gateway (defaults `127.0.0.1:8080`):
 
 - `GET /` — Edge GUI (`edge-gui` / `mlx-edge serve --gui`)
-- `GET /v1/models` — every hot-loaded model
-- `POST /v1/chat/completions` — routed by `model` (Hub id or local path). The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy.
+- `GET /v1/models` — every hot-loaded model, listed by basename
+- `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy.
+- `GET`/`PUT /v1/prefs` — watch dirs and per-model flags (`~/.config/mlx-edge/studio.json`)
 - `POST /v1/completions` — routed by `model`
 - `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id)
 - `POST /v1/unload` — unload `{model}`

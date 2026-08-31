@@ -85,13 +85,13 @@ export const FLAG_DEFS: FlagDef[] = [
   {
     key: "maxTokens",
     flag: "--max-tokens",
-    label: "Max tokens",
-    help: "Default generation cap.",
+    label: "Max context tokens",
+    help: "Generation cap. Filled from the model's context window when known.",
     type: "number",
     engines: ["lm", "vlm"],
     group: "sampling",
     min: 16,
-    max: 8192,
+    max: 262144,
     step: 16,
     default: 512,
   },
@@ -424,4 +424,19 @@ export function flagArgs(engine: EngineKind, values: FlagValues, omit: string[] 
 export function flagsDirty(engine: EngineKind, current: FlagValues, loaded?: FlagValues | null) {
   if (!loaded) return false;
   return JSON.stringify(flagArgs(engine, current, ["host", "port"])) !== JSON.stringify(flagArgs(engine, loaded, ["host", "port"]));
+}
+
+export function flagsForModel(
+  model?: { engine: EngineKind; context?: number | null } | null,
+  saved?: FlagValues | null,
+): FlagValues {
+  const base = defaultFlags();
+  const context = model?.context;
+  if (typeof context === "number" && context > 0) {
+    const cap = FLAG_DEFS.find((d) => d.key === "maxTokens");
+    const max = typeof cap?.max === "number" ? cap.max : context;
+    const min = typeof cap?.min === "number" ? cap.min : 16;
+    base.maxTokens = Math.min(max, Math.max(min, context));
+  }
+  return mergeFlags({ ...base, ...(saved ?? {}) });
 }

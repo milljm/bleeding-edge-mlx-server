@@ -71,8 +71,8 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(
             ids,
             [
-                "mlx-community/Qwen3-8B-4bit",
-                "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+                "Qwen3-8B-4bit",
+                "Qwen2.5-VL-7B-Instruct-4bit",
             ],
         )
 
@@ -86,10 +86,10 @@ class GatewayTests(unittest.TestCase):
 
         status, body = self._json("POST", "/v1/unload", {"model": "mlx-community/Qwen3-8B-4bit"})
         self.assertEqual(status, 200)
-        self.assertEqual(body.get("models"), ["mlx-community/Qwen2.5-VL-7B-Instruct-4bit"])
+        self.assertEqual(body.get("models"), ["Qwen2.5-VL-7B-Instruct-4bit"])
 
         status, listed = self._json("GET", "/v1/models")
-        self.assertEqual([row["id"] for row in listed["data"]], ["mlx-community/Qwen2.5-VL-7B-Instruct-4bit"])
+        self.assertEqual([row["id"] for row in listed["data"]], ["Qwen2.5-VL-7B-Instruct-4bit"])
 
     def test_health_lists_pool(self):
         self._json("POST", "/v1/load", {"engine": "lm", "model": "a"})
@@ -207,6 +207,77 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(len(body.get("models") or []), 1)
             self.assertEqual(body["models"][0]["repo"], "mlx-community/Demo-4bit")
             self.assertEqual(body["errors"], [])
+
+    def test_prefs_roundtrip(self):
+        from tempfile import TemporaryDirectory
+        from unittest import mock
+        from pathlib import Path
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "studio.json"
+            with mock.patch("mlx_edge.prefs.PREFS_PATH", path):
+                status, body = self._json("GET", "/v1/prefs")
+                self.assertEqual(status, 200)
+                self.assertEqual(body.get("watchDirs"), [])
+                status, body = self._json(
+                    "PUT",
+                    "/v1/prefs",
+                    {"watchDirs": ["~/.lmstudio/models"], "flagsByModel": {"MiniMax": {"temp": 0.4}}},
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body.get("watchDirs"), ["~/.lmstudio/models"])
+                status, body = self._json("GET", "/v1/prefs")
+                self.assertEqual(body["flagsByModel"]["MiniMax"]["temp"], 0.4)
+
+    def test_chat_resolves_basename_case_insensitive(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        recorded: dict = {}
+
+        class RecHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                recorded["body"] = json.loads(self.rfile.read(length).decode() or "{}")
+                payload = b'{"id":"chatcmpl-x","choices":[]}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), RecHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        path = "/Users/me/.lmstudio/models/thetom-ai/MiniMax-M2.7-ConfigI-MLX"
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-ConfigI-MLX",
+                engine="lm",
+                model=path,
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-ConfigI-MLX",
+            )
+            self.pool._models[item.id] = item
+            status, _body = self._json(
+                "POST",
+                "/v1/chat/completions",
+                {"model": "minimax-m2.7-configi-mlx", "messages": [{"role": "user", "content": "hello"}]},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(recorded["body"]["model"], path)
+            listed = self._json("GET", "/v1/models")[1]
+            self.assertEqual(listed["data"][0]["id"], "MiniMax-M2.7-ConfigI-MLX")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
 
 
 if __name__ == "__main__":

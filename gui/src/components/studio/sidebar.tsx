@@ -3,7 +3,7 @@ import { ChevronRight, Folder, PanelLeft, Plus, RefreshCw, Search, Trash2 } from
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DIR_PLACEHOLDER } from "@/lib/models";
+import { formatContext, DIR_PLACEHOLDER } from "@/lib/models";
 import { modelIsLive } from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
@@ -20,16 +20,13 @@ export function Sidebar({
   const selectedId = useStudio((s) => s.selectedId);
   const served = useStudio((s) => s.served);
   const dirDraft = useStudio((s) => s.dirDraft);
-  const modelDraft = useStudio((s) => s.modelDraft);
-  const modelEngine = useStudio((s) => s.modelEngine);
   const scanning = useStudio((s) => s.scanning);
   const scanErrors = useStudio((s) => s.scanErrors);
+  const loadingId = useStudio((s) => s.loadingId);
+  const failed = useStudio((s) => s.failed);
   const addWatchDir = useStudio((s) => s.addWatchDir);
   const removeWatchDir = useStudio((s) => s.removeWatchDir);
   const setDirDraft = useStudio((s) => s.setDirDraft);
-  const addModel = useStudio((s) => s.addModel);
-  const setModelDraft = useStudio((s) => s.setModelDraft);
-  const setModelEngine = useStudio((s) => s.setModelEngine);
   const selectModel = useStudio((s) => s.selectModel);
   const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
   const [query, setQuery] = useState("");
@@ -53,16 +50,11 @@ export function Sidebar({
     void addWatchDir(dirDraft);
   }
 
-  function submitModel(e: FormEvent) {
-    e.preventDefault();
-    addModel(modelDraft, modelEngine);
-  }
-
   const emptyHint = !watchDirs.length
-    ? "Add a folder to watch. Edge lists MLX models it finds (config.json + weights). Hugging Face ids can be added below without a folder."
+    ? "Add a folder to watch. Edge lists MLX models it finds (config.json + weights)."
     : scanning
       ? "Scanning folders…"
-      : "No models in these folders. Point at a directory that contains MLX checkpoints, or add a Hugging Face id below.";
+      : "No models in these folders. Point at a directory that contains MLX checkpoints.";
 
   return (
     <aside className="flex h-full min-h-0 flex-col bg-card paper">
@@ -151,7 +143,7 @@ export function Sidebar({
             <p className="mt-2 text-xs text-ok">{loadedCount} hot-loaded on /v1</p>
           ) : null}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           {filtered.length === 0 ? (
             <p className="px-2 py-6 text-sm text-muted-foreground">{emptyHint}</p>
           ) : (
@@ -159,6 +151,9 @@ export function Sidebar({
               {filtered.map((model) => {
                 const active = model.id === selectedId;
                 const live = modelIsLive(served, model);
+                const error = failed[model.id];
+                const loading = loadingId === model.id;
+                const context = formatContext(model.context);
                 return (
                   <li key={model.id}>
                     <button
@@ -168,30 +163,29 @@ export function Sidebar({
                         onNavigate?.();
                       }}
                       className={cn(
-                        "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left transition-colors duration-150",
-                        active
-                          ? "bg-primary text-primary-foreground"
-                          : "hover:bg-accent",
+                        "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ring-inset transition-colors duration-150",
+                        live && "bg-ok/15 hover:bg-ok/20",
+                        error && !live && "bg-destructive/15 hover:bg-destructive/20",
+                        !live && !error && "hover:bg-accent",
+                        active && "ring-2 ring-primary",
                       )}
                     >
                       <span
                         className={cn(
                           "mt-1.5 size-1.5 shrink-0 rounded-full",
-                          live ? "bg-ok" : active ? "bg-primary-foreground/40" : "bg-border",
+                          loading ? "animate-pulse bg-primary" : live ? "bg-ok" : error ? "bg-destructive" : "bg-border",
                         )}
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{model.name}</span>
                         <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                          <Badge
-                            variant={model.engine === "vlm" ? "warn" : "default"}
-                            className={active ? "border-primary-foreground/20 bg-primary-foreground/10 text-primary-foreground" : undefined}
-                          >
+                          <Badge variant={model.engine === "vlm" ? "warn" : "default"}>
                             {model.engine === "vlm" ? "vlm" : "lm"}
                           </Badge>
-                          <span className={cn("text-xs", active ? "text-primary-foreground/70" : "text-muted-foreground")}>
-                            {live ? "loaded · " : ""}
+                          <span className="text-xs text-muted-foreground">
+                            {loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}
                             {model.quant} · {model.size}
+                            {context ? ` · ${context}` : ""}
                           </span>
                         </span>
                       </span>
@@ -202,31 +196,6 @@ export function Sidebar({
             </ul>
           )}
         </div>
-        <form onSubmit={submitModel} className="space-y-2 border-t border-border px-4 py-3">
-          <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Add model</p>
-          <Input
-            value={modelDraft}
-            onChange={(e) => setModelDraft(e.target.value)}
-            placeholder="mlx-community/Qwen3-8B-4bit"
-            className="h-9 font-mono text-xs"
-            aria-label="Model repo"
-          />
-          <div className="flex gap-2">
-            <select
-              value={modelEngine}
-              onChange={(e) => setModelEngine(e.target.value === "vlm" ? "vlm" : "lm")}
-              className="h-9 flex-1 rounded-md border border-input bg-card px-2 font-mono text-xs"
-              aria-label="Engine"
-            >
-              <option value="lm">mlx-lm</option>
-              <option value="vlm">mlx-vlm</option>
-            </select>
-            <Button type="submit" variant="secondary" size="sm" disabled={!modelDraft.trim()}>
-              <Plus />
-              Add
-            </Button>
-          </div>
-        </form>
       </Section>
     </aside>
   );

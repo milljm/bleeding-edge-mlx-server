@@ -1,15 +1,17 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { defaultFlags, flagArgs, mergeFlags, type EngineKind, type FlagValues } from "./flags";
-import { loadTarget, mergeCatalog, migrateWatchDirs, modelFromRepo, type ModelRec } from "./models";
+import { defaultFlags, flagArgs, flagsForModel, mergeFlags, type FlagValues } from "./flags";
+import { flagKey, loadTarget, mergeCatalog, migrateWatchDirs, type ModelRec } from "./models";
 import {
   DEFAULT_GATEWAY,
   getHealth,
+  getPrefs,
   listServed,
   modelIsLive,
   postLoad,
   postScan,
   postUnload,
+  putPrefs,
   type GatewayInfo,
   type ScanError,
   type ServedRuntime,
@@ -24,24 +26,24 @@ type StudioState = {
   models: ModelRec[];
   selectedId: string | null;
   flags: FlagValues;
+  flagsByModel: Record<string, FlagValues>;
   served: ServedRuntime[];
   gateway: GatewayInfo;
   tab: StudioTab;
   dirDraft: string;
-  modelDraft: string;
-  modelEngine: EngineKind;
   scanning: boolean;
   scanErrors: ScanError[];
+  loadingId: string | null;
+  failed: Record<string, string>;
   addWatchDir: (dir: string) => Promise<void>;
   removeWatchDir: (dir: string) => Promise<void>;
   setDirDraft: (value: string) => void;
-  addModel: (repo: string, engine: EngineKind) => boolean;
-  setModelDraft: (value: string) => void;
-  setModelEngine: (engine: EngineKind) => void;
   selectModel: (id: string) => void;
   setFlag: (key: string, value: string | number | boolean) => void;
   resetFlags: () => void;
   setTab: (tab: StudioTab) => void;
+  applyPrefs: (prefs: { watchDirs?: string[]; flagsByModel?: Record<string, FlagValues> }) => void;
+  persistPrefs: () => Promise<void>;
   scanWatchDirs: () => Promise<void>;
   startServe: (opts?: { stay?: boolean }) => Promise<void>;
   stopServe: () => Promise<void>;
@@ -81,51 +83,69 @@ export const useStudio = create<StudioState>()(
       models: [],
       selectedId: null,
       flags: defaultFlags(),
+      flagsByModel: {},
       served: [],
       gateway: DEFAULT_GATEWAY,
       tab: "settings",
       dirDraft: "",
-      modelDraft: "",
-      modelEngine: "lm",
       scanning: false,
       scanErrors: [],
+      loadingId: null,
+      failed: {},
       addWatchDir: async (dir) => {
         const trimmed = dir.trim();
         if (!trimmed) return;
         const watchDirs = get().watchDirs.includes(trimmed) ? get().watchDirs : [...get().watchDirs, trimmed];
         set({ watchDirs, dirDraft: "" });
+        await get().persistPrefs();
         await get().scanWatchDirs();
       },
       removeWatchDir: async (dir) => {
         const watchDirs = get().watchDirs.filter((d) => d !== dir);
-        const extraModels = get().extraModels.filter((m) => m.watchDir !== dir);
-        set({ watchDirs, extraModels });
+        set({ watchDirs, extraModels: [] });
+        await get().persistPrefs();
         await get().scanWatchDirs();
       },
       setDirDraft: (dirDraft) => set({ dirDraft }),
-      addModel: (repo, engine) => {
-        const watchDir = get().watchDirs[0] ?? "";
-        const rec = modelFromRepo(repo, engine, watchDir);
-        if (!rec) return false;
-        if (get().models.some((m) => m.id === rec.id || m.repo === rec.repo)) {
-          const existing = get().models.find((m) => m.id === rec.id || m.repo === rec.repo);
-          set({ selectedId: existing?.id ?? rec.id, modelDraft: "", tab: "settings" });
-          return true;
-        }
-        const extraModels = [...get().extraModels, rec];
-        set({
-          modelDraft: "",
-          tab: "settings",
-          ...catalog(get().scanned, extraModels, rec.id),
-        });
-        return true;
+      selectModel: (id) => {
+        const model = get().models.find((m) => m.id === id);
+        const flags = flagsForModel(model, model ? get().flagsByModel[flagKey(model)] : undefined);
+        set({ selectedId: id, flags, tab: "settings" });
       },
-      setModelDraft: (modelDraft) => set({ modelDraft }),
-      setModelEngine: (modelEngine) => set({ modelEngine }),
-      selectModel: (id) => set({ selectedId: id, tab: "settings" }),
-      setFlag: (key, value) => set({ flags: { ...get().flags, [key]: value } }),
-      resetFlags: () => set({ flags: defaultFlags() }),
+      setFlag: (key, value) => {
+        const model = get().selected();
+        const flags = { ...get().flags, [key]: value };
+        const flagsByModel = { ...get().flagsByModel };
+        if (model) flagsByModel[flagKey(model)] = flags;
+        set({ flags, flagsByModel });
+        void get().persistPrefs();
+      },
+      resetFlags: () => {
+        const model = get().selected();
+        const flags = flagsForModel(model, null);
+        const flagsByModel = { ...get().flagsByModel };
+        if (model) flagsByModel[flagKey(model)] = flags;
+        set({ flags, flagsByModel });
+        void get().persistPrefs();
+      },
       setTab: (tab) => set({ tab }),
+      applyPrefs: (prefs) => {
+        const fromServer = migrateWatchDirs(prefs.watchDirs);
+        const watchDirs = fromServer.length ? fromServer : migrateWatchDirs(get().watchDirs);
+        const flagsByModel = { ...get().flagsByModel, ...(prefs.flagsByModel ?? {}) };
+        const model = get().models.find((m) => m.id === get().selectedId);
+        const flags = flagsForModel(model, model ? flagsByModel[flagKey(model)] : get().flags);
+        set({ watchDirs, flagsByModel, flags });
+        if (!fromServer.length && watchDirs.length) void get().persistPrefs();
+      },
+      persistPrefs: async () => {
+        const { watchDirs, flagsByModel } = get();
+        try {
+          await putPrefs({ watchDirs, flagsByModel });
+        } catch {
+          /* preview without a gateway still keeps localStorage */
+        }
+      },
       selected: () => get().models.find((m) => m.id === get().selectedId),
       isLoaded: (id) => {
         const model = get().models.find((m) => m.id === id) ?? (id ? { id, repo: id } : null);
@@ -137,17 +157,20 @@ export const useStudio = create<StudioState>()(
           set({
             scanning: false,
             scanErrors: [],
-            ...catalog([], get().extraModels, get().selectedId),
+            ...catalog([], [], get().selectedId),
           });
           return;
         }
         set({ scanning: true });
         try {
           const { models, errors } = await postScan(dirs);
+          const next = catalog(models, [], get().selectedId);
+          const selected = next.models.find((m) => m.id === next.selectedId);
           set({
             scanning: false,
             scanErrors: errors,
-            ...catalog(models, get().extraModels, get().selectedId),
+            flags: flagsForModel(selected, selected ? get().flagsByModel[flagKey(selected)] : undefined),
+            ...next,
           });
         } catch (err) {
           set({
@@ -160,18 +183,33 @@ export const useStudio = create<StudioState>()(
         const model = get().selected();
         if (!model) return;
         const flags = get().flags;
-        await postLoad({
-          engine: model.engine,
-          model: loadTarget(model),
-          args: flagArgs(model.engine, flags, ["host", "port"]),
-        });
-        const gateway = (await getHealth()).gateway;
-        const listed = await listServed(gateway);
-        set({
-          served: attachFlags(listed, get().served, { model, flags }),
-          gateway,
-          tab: opts?.stay ? get().tab : "playground",
-        });
+        const failed = { ...get().failed };
+        delete failed[model.id];
+        set({ loadingId: model.id, failed });
+        try {
+          await postLoad({
+            engine: model.engine,
+            model: loadTarget(model),
+            args: flagArgs(model.engine, flags, ["host", "port"]),
+          });
+          const gateway = (await getHealth()).gateway;
+          const listed = await listServed(gateway);
+          const stillFailed = { ...get().failed };
+          delete stillFailed[model.id];
+          set({
+            served: attachFlags(listed, get().served, { model, flags }),
+            gateway,
+            loadingId: null,
+            failed: stillFailed,
+            tab: opts?.stay ? get().tab : "playground",
+          });
+        } catch (err) {
+          set({
+            loadingId: null,
+            failed: { ...get().failed, [model.id]: err instanceof Error ? err.message : "Serve failed" },
+          });
+          throw err;
+        }
       },
       stopServe: async () => {
         const model = get().selected();
@@ -179,7 +217,9 @@ export const useStudio = create<StudioState>()(
         await postUnload(loadTarget(model));
         const gateway = (await getHealth()).gateway;
         const listed = await listServed(gateway);
-        set({ served: attachFlags(listed, get().served), gateway });
+        const failed = { ...get().failed };
+        delete failed[model.id];
+        set({ served: attachFlags(listed, get().served), gateway, failed });
       },
       reloadServe: async () => {
         await get().startServe({ stay: true });
@@ -195,21 +235,24 @@ export const useStudio = create<StudioState>()(
       skipHydration: true,
       partialize: (s) => ({
         watchDirs: s.watchDirs,
-        extraModels: s.extraModels,
         selectedId: s.selectedId,
+        flagsByModel: s.flagsByModel,
         flags: s.flags,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
-        state.flags = mergeFlags(state.flags);
         state.watchDirs = migrateWatchDirs(state.watchDirs);
-        const next = catalog([], state.extraModels ?? [], state.selectedId);
+        state.flagsByModel = state.flagsByModel ?? {};
+        state.flags = mergeFlags(state.flags);
+        const next = catalog([], [], state.selectedId);
         state.scanned = [];
         state.models = next.models;
-        state.extraModels = next.extraModels;
+        state.extraModels = [];
         state.selectedId = next.selectedId;
         state.scanning = false;
         state.scanErrors = [];
+        state.loadingId = null;
+        state.failed = {};
       },
     },
   ),

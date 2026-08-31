@@ -8,6 +8,7 @@ export type ModelRec = {
   engine: EngineKind;
   size: string;
   quant: string;
+  context?: number | null;
   watchDir: string;
   source: "scan" | "manual";
 };
@@ -26,6 +27,22 @@ export function migrateWatchDirs(dirs?: string[] | null): string[] {
 export function slugModelId(engine: EngineKind, repo: string, source: ModelRec["source"] = "scan") {
   const base = `${engine}-${repo.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.replace(/-+$/g, "");
   return source === "manual" ? `custom-${base}` : base;
+}
+
+export function publicName(model: Pick<ModelRec, "path" | "repo" | "name">) {
+  const fromPath = model.path.split(/[/\\]/).filter(Boolean).pop();
+  const fromRepo = model.repo.split(/[/\\]/).filter(Boolean).pop();
+  return fromPath || fromRepo || model.name;
+}
+
+export function formatContext(n?: number | null) {
+  if (!n || n <= 0) return null;
+  if (n % 1024 === 0 && n >= 1024) return `${n / 1024}k`;
+  return n.toLocaleString("en-US");
+}
+
+export function flagKey(model: Pick<ModelRec, "repo" | "id" | "path">) {
+  return model.repo || model.id || model.path;
 }
 
 export function modelFromRepo(repo: string, engine: EngineKind, watchDir: string): ModelRec | null {

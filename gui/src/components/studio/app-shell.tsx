@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { modelIsLive } from "@/lib/edge-api";
+import { getPrefs, modelIsLive } from "@/lib/edge-api";
 import { flagsDirty } from "@/lib/flags";
 import { engineLabel, loadedSummary } from "@/lib/command";
 import { useStudio, type StudioTab } from "@/lib/studio-store";
@@ -33,35 +33,32 @@ export function AppShell() {
   const startServe = useStudio((s) => s.startServe);
   const stopServe = useStudio((s) => s.stopServe);
   const reloadServe = useStudio((s) => s.reloadServe);
-  const [busy, setBusy] = useState(false);
+  const loadingId = useStudio((s) => s.loadingId);
+  const failed = useStudio((s) => s.failed);
 
   const live = modelIsLive(served, model);
   const loaded = served.find((row) => modelIsLive([row], model));
   const dirty = Boolean(live && model && flagsDirty(model.engine, flags, loaded?.flags));
+  const loadingThis = Boolean(model && loadingId === model.id);
+  const failedThis = model ? failed[model.id] : undefined;
 
   async function onServe() {
-    if (busy) return;
-    setBusy(true);
+    if (loadingThis) return;
     try {
       if (live) await stopServe();
       else await startServe();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Serve failed");
-    } finally {
-      setBusy(false);
     }
   }
 
   async function onReload() {
-    if (busy || !live) return;
-    setBusy(true);
+    if (loadingThis || !live) return;
     try {
       await reloadServe();
       toast.success("Model reloaded");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Reload failed");
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -171,10 +168,14 @@ export function AppShell() {
                     <span className="size-1.5 animate-pulse rounded-full bg-ok" />
                     loaded
                   </Badge>
+                ) : failedThis ? (
+                  <Badge variant="bleed">failed</Badge>
                 ) : null}
                 {served.length > 1 ? <Badge variant="ok">{served.length} loaded</Badge> : null}
               </div>
-              <p className="truncate font-mono text-xs text-muted-foreground">{model?.repo}</p>
+              <p className="truncate font-mono text-xs text-muted-foreground">
+                {failedThis && !live ? failedThis : model?.repo}
+              </p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               {dirty ? (
@@ -183,19 +184,19 @@ export function AppShell() {
                   variant="secondary"
                   size="sm"
                   onClick={() => void onReload()}
-                  disabled={!model || busy}
+                  disabled={!model || loadingThis}
                   aria-label="Reload model"
                 >
-                  <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
+                  <RefreshCw className={cn("size-3.5", loadingThis && "animate-spin")} />
                   Reload
                 </Button>
               ) : null}
               <Button
                 type="button"
-                variant={live ? "destructive" : "default"}
+                variant={live ? "destructive" : failedThis ? "destructive" : "default"}
                 size="sm"
                 onClick={() => void onServe()}
-                disabled={!model || busy}
+                disabled={!model || loadingThis}
               >
                 {live ? (
                   <>
@@ -204,8 +205,8 @@ export function AppShell() {
                   </>
                 ) : (
                   <>
-                    <Play className="size-3.5" />
-                    Serve
+                    <Play className={cn("size-3.5", loadingThis && "animate-pulse")} />
+                    {loadingThis ? "Loading" : "Serve"}
                   </>
                 )}
               </Button>
@@ -333,12 +334,19 @@ function useSidebarLayout() {
 function useRehydrateStudio() {
   const syncServed = useStudio((s) => s.syncServed);
   const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
+  const applyPrefs = useStudio((s) => s.applyPrefs);
   useEffect(() => {
     const api = useStudio.persist;
     let cancelled = false;
     void Promise.resolve(api.rehydrate())
       .catch(() => undefined)
       .then(async () => {
+        if (cancelled) return;
+        try {
+          applyPrefs(await getPrefs());
+        } catch {
+          /* localStorage watch dirs still apply */
+        }
         if (cancelled) return;
         try {
           await scanWatchDirs();
@@ -355,5 +363,5 @@ function useRehydrateStudio() {
     return () => {
       cancelled = true;
     };
-  }, [syncServed, scanWatchDirs]);
+  }, [syncServed, scanWatchDirs, applyPrefs]);
 }
