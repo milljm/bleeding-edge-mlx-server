@@ -420,3 +420,8 @@ export function flagArgs(engine: EngineKind, values: FlagValues, omit: string[] 
   }
   return args;
 }
+
+export function flagsDirty(engine: EngineKind, current: FlagValues, loaded?: FlagValues | null) {
+  if (!loaded) return false;
+  return JSON.stringify(flagArgs(engine, current, ["host", "port"])) !== JSON.stringify(flagArgs(engine, loaded, ["host", "port"]));
+}

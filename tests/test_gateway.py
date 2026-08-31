@@ -147,6 +147,21 @@ class GatewayTests(unittest.TestCase):
                 httpd.shutdown()
                 httpd.server_close()
 
+    def test_scan_endpoint(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            model = Path(tmp) / "mlx-community" / "Demo-4bit"
+            model.mkdir(parents=True)
+            (model / "config.json").write_text('{"model_type":"qwen3"}', encoding="utf-8")
+            (model / "model.safetensors").write_bytes(b"abcd")
+            status, body = self._json("POST", "/v1/scan", {"dirs": [tmp]})
+            self.assertEqual(status, 200)
+            self.assertEqual(len(body.get("models") or []), 1)
+            self.assertEqual(body["models"][0]["repo"], "mlx-community/Demo-4bit")
+            self.assertEqual(body["errors"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

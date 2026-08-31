@@ -31,9 +31,10 @@ opens a browser. The footer shows the OpenAI base URL:
 Serving on http://127.0.0.1:8080/v1
 ```
 
-Point any OpenAI-compatible chat client at that address. Serve in the GUI
-hot-loads a model by calling `mlx-edge` (`POST /v1/load`). Unload drops only
-that one.
+Point any OpenAI-compatible chat client at that address. Serve in the GUI hot-loads a model by calling `mlx-edge` (`POST /v1/load`). Unload drops only
+that one. The model list is a scan of folders you add under Watch — nothing is
+hard-coded, and no default directory is assumed. Change flags on a running model
+and **Reload** to apply them (`POST /v1/load` replaces that engine in the pool).
 
 Remote clients (another machine on the LAN):
 
@@ -136,8 +137,9 @@ Gateway (defaults `127.0.0.1:8080`):
 - `GET /v1/models` — every hot-loaded model
 - `POST /v1/chat/completions` — routed by `model`
 - `POST /v1/completions` — routed by `model`
-- `POST /v1/load` — hot-load `{engine, model, args?}`
+- `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id)
 - `POST /v1/unload` — unload `{model}`
+- `POST /v1/scan` — `{dirs: […]}` → local MLX checkpoints (`config.json` + weights)
 - `GET /health` — `{status, models, host, port, bind, url}`
 
 Each loaded model is its own `mlx_lm.server` / `mlx_vlm.server` child. The

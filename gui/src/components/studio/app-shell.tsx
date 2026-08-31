@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, Menu, PanelLeft, Play, Square, X } from "lucide-react";
+import { Check, Copy, Menu, PanelLeft, Play, RefreshCw, Square, X } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { EndpointPanel } from "@/components/studio/endpoint";
 import { FlagPanel } from "@/components/studio/flag-panel";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { modelIsLive } from "@/lib/edge-api";
+import { flagsDirty } from "@/lib/flags";
 import { engineLabel, loadedSummary } from "@/lib/command";
 import { useStudio, type StudioTab } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
@@ -25,14 +26,18 @@ export function AppShell() {
   const sidebar = useSidebarLayout();
   const model = useStudio((s) => s.selected());
   const served = useStudio((s) => s.served);
+  const flags = useStudio((s) => s.flags);
   const gateway = useStudio((s) => s.gateway);
   const tab = useStudio((s) => s.tab);
   const setTab = useStudio((s) => s.setTab);
   const startServe = useStudio((s) => s.startServe);
   const stopServe = useStudio((s) => s.stopServe);
+  const reloadServe = useStudio((s) => s.reloadServe);
   const [busy, setBusy] = useState(false);
 
   const live = modelIsLive(served, model);
+  const loaded = served.find((row) => modelIsLive([row], model));
+  const dirty = Boolean(live && model && flagsDirty(model.engine, flags, loaded?.flags));
 
   async function onServe() {
     if (busy) return;
@@ -42,6 +47,19 @@ export function AppShell() {
       else await startServe();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Serve failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onReload() {
+    if (busy || !live) return;
+    setBusy(true);
+    try {
+      await reloadServe();
+      toast.success("Model reloaded");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Reload failed");
     } finally {
       setBusy(false);
     }
@@ -158,26 +176,41 @@ export function AppShell() {
               </div>
               <p className="truncate font-mono text-xs text-muted-foreground">{model?.repo}</p>
             </div>
-            <Button
-              type="button"
-              variant={live ? "destructive" : "default"}
-              size="sm"
-              onClick={() => void onServe()}
-              disabled={!model || busy}
-            >
-              {live ? (
-                <>
-                  <Square className="size-3.5" />
-                  Unload
-                </>
-              ) : (
-                <>
-                  <Play className="size-3.5" />
-                  Serve
-                </>
-              )}
-            </Button>
-            <ThemeToggle />
+            <div className="flex shrink-0 items-center gap-1.5">
+              {dirty ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void onReload()}
+                  disabled={!model || busy}
+                  aria-label="Reload model"
+                >
+                  <RefreshCw className={cn("size-3.5", busy && "animate-spin")} />
+                  Reload
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                variant={live ? "destructive" : "default"}
+                size="sm"
+                onClick={() => void onServe()}
+                disabled={!model || busy}
+              >
+                {live ? (
+                  <>
+                    <Square className="size-3.5" />
+                    Unload
+                  </>
+                ) : (
+                  <>
+                    <Play className="size-3.5" />
+                    Serve
+                  </>
+                )}
+              </Button>
+              <ThemeToggle />
+            </div>
           </header>
 
           <Tabs
@@ -299,12 +332,19 @@ function useSidebarLayout() {
 
 function useRehydrateStudio() {
   const syncServed = useStudio((s) => s.syncServed);
+  const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
   useEffect(() => {
     const api = useStudio.persist;
     let cancelled = false;
     void Promise.resolve(api.rehydrate())
       .catch(() => undefined)
       .then(async () => {
+        if (cancelled) return;
+        try {
+          await scanWatchDirs();
+        } catch {
+          /* empty watch list is fine */
+        }
         if (cancelled) return;
         try {
           await syncServed();
@@ -315,5 +355,5 @@ function useRehydrateStudio() {
     return () => {
       cancelled = true;
     };
-  }, [syncServed]);
+  }, [syncServed, scanWatchDirs]);
 }

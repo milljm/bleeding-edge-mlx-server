@@ -1,4 +1,5 @@
 import type { EngineKind, FlagValues } from "./flags";
+import type { ModelRec } from "./models";
 
 export type ServedRuntime = {
   id: string;
@@ -111,4 +112,16 @@ export async function postUnload(model: string) {
     body: JSON.stringify({ model }),
   });
   return parseJson(res);
+}
+
+export type ScanError = { dir: string; message: string };
+
+export async function postScan(dirs: string[]): Promise<{ models: ModelRec[]; errors: ScanError[] }> {
+  const res = await fetch("/v1/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dirs }),
+  });
+  const body = (await parseJson(res)) as { models?: ModelRec[]; errors?: ScanError[] };
+  return { models: body.models ?? [], errors: body.errors ?? [] };
 }

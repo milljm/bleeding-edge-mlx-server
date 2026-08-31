@@ -1,9 +1,9 @@
 import { type FormEvent, type ReactNode, useMemo, useState } from "react";
-import { ChevronRight, Folder, PanelLeft, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronRight, Folder, PanelLeft, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DEFAULT_WATCH } from "@/lib/models";
+import { DIR_PLACEHOLDER } from "@/lib/models";
 import { modelIsLive } from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
@@ -22,6 +22,8 @@ export function Sidebar({
   const dirDraft = useStudio((s) => s.dirDraft);
   const modelDraft = useStudio((s) => s.modelDraft);
   const modelEngine = useStudio((s) => s.modelEngine);
+  const scanning = useStudio((s) => s.scanning);
+  const scanErrors = useStudio((s) => s.scanErrors);
   const addWatchDir = useStudio((s) => s.addWatchDir);
   const removeWatchDir = useStudio((s) => s.removeWatchDir);
   const setDirDraft = useStudio((s) => s.setDirDraft);
@@ -29,6 +31,7 @@ export function Sidebar({
   const setModelDraft = useStudio((s) => s.setModelDraft);
   const setModelEngine = useStudio((s) => s.setModelEngine);
   const selectModel = useStudio((s) => s.selectModel);
+  const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
   const [query, setQuery] = useState("");
 
   const loadedCount = served.length;
@@ -46,13 +49,20 @@ export function Sidebar({
 
   function submitDir(e: FormEvent) {
     e.preventDefault();
-    addWatchDir(dirDraft || DEFAULT_WATCH);
+    if (!dirDraft.trim()) return;
+    void addWatchDir(dirDraft);
   }
 
   function submitModel(e: FormEvent) {
     e.preventDefault();
     addModel(modelDraft, modelEngine);
   }
+
+  const emptyHint = !watchDirs.length
+    ? "Add a folder to watch. Edge lists MLX models it finds (config.json + weights). Hugging Face ids can be added below without a folder."
+    : scanning
+      ? "Scanning folders…"
+      : "No models in these folders. Point at a directory that contains MLX checkpoints, or add a Hugging Face id below.";
 
   return (
     <aside className="flex h-full min-h-0 flex-col bg-card paper">
@@ -73,12 +83,30 @@ export function Sidebar({
           <Input
             value={dirDraft}
             onChange={(e) => setDirDraft(e.target.value)}
-            placeholder={DEFAULT_WATCH}
+            placeholder={DIR_PLACEHOLDER}
             className="h-9 font-mono text-xs"
             aria-label="Model directory"
           />
-          <Button type="submit" variant="secondary" size="icon-sm" className="size-9" aria-label="Add directory">
+          <Button
+            type="submit"
+            variant="secondary"
+            size="icon-sm"
+            className="size-9"
+            aria-label="Add directory"
+            disabled={!dirDraft.trim()}
+          >
             <Plus />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-9"
+            aria-label="Rescan folders"
+            disabled={scanning || watchDirs.length === 0}
+            onClick={() => void scanWatchDirs()}
+          >
+            <RefreshCw className={cn(scanning && "animate-spin")} />
           </Button>
         </form>
         <ul className="mt-2 space-y-1 px-3 pb-3">
@@ -93,13 +121,18 @@ export function Sidebar({
                 type="button"
                 className="rounded p-1 hover:bg-accent hover:text-foreground"
                 aria-label={`Remove ${dir}`}
-                onClick={() => removeWatchDir(dir)}
+                onClick={() => void removeWatchDir(dir)}
               >
                 <Trash2 className="size-3.5" />
               </button>
             </li>
           ))}
         </ul>
+        {scanErrors.length ? (
+          <p className="px-4 pb-3 text-xs text-destructive">
+            {scanErrors.map((err) => `${err.dir}: ${err.message}`).join(" · ")}
+          </p>
+        ) : null}
       </Section>
 
       <Section title="Models" count={models.length} defaultOpen className="min-h-0 flex-1 border-t border-border">
@@ -120,9 +153,7 @@ export function Sidebar({
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
           {filtered.length === 0 ? (
-            <p className="px-2 py-6 text-sm text-muted-foreground">
-              No models in these folders. Seeded catalog appears for {DEFAULT_WATCH}. Add a Hugging Face id below.
-            </p>
+            <p className="px-2 py-6 text-sm text-muted-foreground">{emptyHint}</p>
           ) : (
             <ul className="space-y-1">
               {filtered.map((model) => {

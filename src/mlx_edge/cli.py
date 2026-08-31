@@ -19,7 +19,7 @@ from typing import Any
 from mlx_edge import __version__
 from mlx_edge.engines import ENGINES, PYTHON_ENGINES, Engine, get_engine, resolve_targets
 
-USER_AGENT = "mlx-edge/0.3.0"
+USER_AGENT = f"mlx-edge/{__version__}"
 PIN_PATH = Path.home() / ".config" / "mlx-edge" / "pins.json"
 GATEWAY_PATH = Path.home() / ".config" / "mlx-edge" / "gateway.json"
 

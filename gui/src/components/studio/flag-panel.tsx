@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { RefreshCw, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,7 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { engineLabel } from "@/lib/command";
 import { modelIsLive } from "@/lib/edge-api";
-import { flagsFor, type FlagDef, type FlagGroup } from "@/lib/flags";
+import { flagsDirty, flagsFor, type FlagDef, type FlagGroup } from "@/lib/flags";
 import { useStudio } from "@/lib/studio-store";
 
 const GROUP_LABEL: Record<FlagGroup, string> = {
@@ -22,16 +22,20 @@ export function FlagPanel() {
   const served = useStudio((s) => s.served);
   const setFlag = useStudio((s) => s.setFlag);
   const resetFlags = useStudio((s) => s.resetFlags);
+  const reloadServe = useStudio((s) => s.reloadServe);
   const [advanced, setAdvanced] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   if (!model) {
-    return <p className="text-sm text-muted-foreground">Pick a model in the sidebar.</p>;
+    return <p className="text-sm text-muted-foreground">Pick a model in the sidebar, or add a folder to watch.</p>;
   }
 
   const visible = flagsFor(model.engine, false);
   const extra = flagsFor(model.engine, true);
   const groups: FlagGroup[] = ["server", "sampling", "thinking"];
   const live = modelIsLive(served, model);
+  const loaded = served.find((row) => modelIsLive([row], model));
+  const dirty = Boolean(live && flagsDirty(model.engine, flags, loaded?.flags));
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-8">
@@ -40,13 +44,38 @@ export function FlagPanel() {
           <h2 className="text-lg font-medium tracking-tight">Engine switches</h2>
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             These map 1:1 onto {engineLabel(model.engine)} flags. Serve passes them through mlx-edge.
-            {live ? " Unload and Serve again after changing flags." : " Serve hot-loads this model beside any that are already up."}
+            {live
+              ? dirty
+                ? " Flags changed on a running model — Reload to apply them."
+                : " Change a flag and Reload to apply it without unloading the others."
+              : " Serve hot-loads this model beside any that are already up."}
           </p>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={resetFlags}>
-          <RotateCcw />
-          Reset
-        </Button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {dirty ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await reloadServe();
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <RefreshCw className={busy ? "animate-spin" : undefined} />
+              Reload model
+            </Button>
+          ) : null}
+          <Button type="button" variant="ghost" size="sm" onClick={resetFlags}>
+            <RotateCcw />
+            Reset
+          </Button>
+        </div>
       </div>
       {groups.map((group) => {
         const defs = visible.filter((d) => (d.group ?? "server") === group);

@@ -161,6 +161,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/unload", "/v1/models/unload"}:
                 self._unload()
                 return
+            if path in {"/v1/scan", "/v1/models/scan"}:
+                self._scan()
+                return
             if path in {"/v1/chat/completions", "/v1/completions", "/chat/completions"}:
                 self._proxy()
                 return
@@ -203,6 +206,22 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 self._json({"error": {"message": f"{name} is not loaded", "type": "invalid_request_error"}}, 404)
                 return
             self._json({"ok": True, "model": item.model, "models": [m.model for m in pool.list()]})
+
+        def _scan(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                return
+            dirs = body.get("dirs") or []
+            if isinstance(body.get("dir"), str) and body.get("dir").strip():
+                dirs = [str(body["dir"]), *(dirs if isinstance(dirs, list) else [])]
+            if not isinstance(dirs, list) or not all(isinstance(x, str) for x in dirs):
+                self._json({"error": {"message": "dirs must be a list of strings", "type": "invalid_request_error"}}, 400)
+                return
+            from mlx_edge.scan import scan_dirs
+
+            self._json(scan_dirs(dirs))
 
         def _proxy(self) -> None:
             loaded = pool.list()

@@ -17,10 +17,11 @@ class PoolTests(unittest.TestCase):
 
     def test_reload_replaces_same_id(self):
         pool = self._pool()
-        first = pool.load("lm", "qwen")
-        second = pool.load("lm", "qwen")
+        first = pool.load("lm", "qwen", ["--temp", "0"])
+        second = pool.load("lm", "qwen", ["--temp", "0.7"])
         self.assertEqual(len(pool.list()), 1)
         self.assertGreaterEqual(second.started_at, first.started_at)
+        self.assertEqual(pool.list()[0].args, ["--temp", "0.7"])
 
     def test_unload_leaves_others(self):
         pool = self._pool()

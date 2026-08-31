@@ -1,5 +1,5 @@
 import { flagArgs, type EngineKind, type FlagValues } from "./flags";
-import type { ModelRec } from "./models";
+import { loadTarget, type ModelRec } from "./models";
 import { DEFAULT_GATEWAY, openaiUrl, type GatewayInfo, type ServedRuntime } from "./edge-api";
 
 function shQuote(value: string): string {
@@ -23,7 +23,7 @@ export function loadCommand(model: ModelRec, flags: FlagValues): string {
     "--engine",
     model.engine,
     "--model",
-    model.path || model.repo,
+    loadTarget(model),
     ...flagArgs(model.engine, flags, ["host", "port"]),
   ];
   return args.map(shQuote).join(" ");
