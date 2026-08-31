@@ -147,6 +147,52 @@ class GatewayTests(unittest.TestCase):
                 httpd.shutdown()
                 httpd.server_close()
 
+    def test_proxy_rewrites_hub_id_to_loaded_path(self):
+        """A short Hub id must not be forwarded — mlx-lm would download it."""
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        recorded: dict = {}
+
+        class RecHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length)
+                recorded["body"] = json.loads(raw.decode() or "{}")
+                payload = b'{"id":"chatcmpl-x","choices":[]}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), RecHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        path = "/Users/me/.lmstudio/models/thetom-ai/MiniMax-M2.7-ConfigI-MLX"
+        try:
+            item = LoadedModel(id=path, engine="lm", model=path, port=engine_port, started_at=0.0)
+            self.pool._models[item.id] = item
+            status, _body = self._json(
+                "POST",
+                "/v1/chat/completions",
+                {
+                    "model": "thetom-ai/MiniMax-M2.7-ConfigI-MLX",
+                    "messages": [{"role": "user", "content": "hello"}],
+                },
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(recorded.get("body", {}).get("model"), path)
+            self.assertEqual(recorded["body"]["messages"][0]["content"], "hello")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_scan_endpoint(self):
         from pathlib import Path
         from tempfile import TemporaryDirectory

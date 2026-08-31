@@ -252,6 +252,10 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 )
                 return
             assert item is not None
+            # mlx-lm/mlx-vlm treat a different `model` string as a new Hub
+            # id and snapshot_download it. Pin to the path this child was
+            # started with so a short repo name cannot trigger a re-download.
+            body["model"] = item.model
             _proxy_to(self, item, json.dumps(body).encode("utf-8"))
 
     return GatewayHandler

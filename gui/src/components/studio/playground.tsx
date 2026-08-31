@@ -3,6 +3,7 @@ import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { modelIsLive } from "@/lib/edge-api";
+import { loadTarget } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +31,7 @@ export function Playground() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: model.repo,
+          model: loadTarget(model),
           messages: next.map((t) => ({ role: t.role, content: t.text })),
           max_tokens: 256,
           stream: false,
@@ -69,7 +70,7 @@ export function Playground() {
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         {turns.length === 0 ? (
           <p className="pt-6 text-sm text-muted-foreground">
-            POST /v1/chat/completions with model {model?.repo}. {served.length} loaded on this origin.
+            POST /v1/chat/completions on the already-loaded engine. {served.length} loaded on this origin.
           </p>
         ) : (
           turns.map((turn, i) => (

@@ -135,7 +135,7 @@ Gateway (defaults `127.0.0.1:8080`):
 
 - `GET /` — Edge GUI (`edge-gui` / `mlx-edge serve --gui`)
 - `GET /v1/models` — every hot-loaded model
-- `POST /v1/chat/completions` — routed by `model`
+- `POST /v1/chat/completions` — routed by `model` (Hub id or local path). The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy.
 - `POST /v1/completions` — routed by `model`
 - `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id)
 - `POST /v1/unload` — unload `{model}`
