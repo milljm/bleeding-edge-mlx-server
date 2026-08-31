@@ -1,0 +1,53 @@
+{% set name = "mlx-edge" %}
+{% set version = "0.1.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  path: ..
+
+build:
+  noarch: python
+  number: 0
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  entry_points:
+    - mlx-edge = mlx_edge.cli:main
+
+requirements:
+  host:
+    - python >=3.10
+    - pip
+    - setuptools
+  run:
+    - python >=3.10
+    - pip
+    - git
+    - mlx
+    - mlx-lm
+    - mlx-vlm
+
+test:
+  imports:
+    - mlx_edge
+  commands:
+    - mlx-edge --help
+    - mlx-edge engines
+    - mlx-edge status --offline
+
+about:
+  home: https://github.com/milljm/bleeding-edge-mlx-server
+  license: MIT
+  license_file: LICENSE
+  summary: Conda-forge MLX runtime with git overlays for mlx-lm and mlx-vlm.
+  description: |
+    mlx-edge keeps compiled mlx on conda-forge and overlays git HEAD of
+    mlx-lm / mlx-vlm with one command so new model architectures can run
+    before the next feedstock rebuild.
+  doc_url: https://github.com/milljm/bleeding-edge-mlx-server
+  dev_url: https://github.com/milljm/bleeding-edge-mlx-server
+
+extra:
+  recipe-maintainers:
+    - milljm

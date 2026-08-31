@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlx-edge"
+version = "0.1.0"
+description = "Conda-forge MLX runtime with one-command git overlays for mlx-lm and mlx-vlm."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Jason Miller" }]
+keywords = ["mlx", "mlx-lm", "mlx-vlm", "conda-forge", "apple-silicon"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/milljm/bleeding-edge-mlx-server"
+Source = "https://github.com/milljm/bleeding-edge-mlx-server"
+Issues = "https://github.com/milljm/bleeding-edge-mlx-server/issues"
+
+[project.scripts]
+mlx-edge = "mlx_edge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"

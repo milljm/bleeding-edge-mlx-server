@@ -1,0 +1,4 @@
+# noarch python — the run dependency on mlx selects osx-arm64 (and any
+# other platform conda-forge mlx supports).
+python_min:
+  - "3.10"
