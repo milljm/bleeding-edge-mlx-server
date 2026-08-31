@@ -3,6 +3,7 @@ import { Check, Copy, Menu, PanelLeft, Play, RefreshCw, Square, X } from "lucide
 import { toast, Toaster } from "sonner";
 import { EndpointPanel } from "@/components/studio/endpoint";
 import { FlagPanel } from "@/components/studio/flag-panel";
+import { LogPanel } from "@/components/studio/log-panel";
 import { Playground } from "@/components/studio/playground";
 import { Sidebar } from "@/components/studio/sidebar";
 import { ThemeToggle } from "@/components/studio/theme-toggle";
@@ -220,10 +221,11 @@ export function AppShell() {
             className="flex min-h-0 flex-1 flex-col gap-0"
           >
             <div className="border-b border-border px-3 py-2">
-              <TabsList>
+              <TabsList className="h-auto flex-wrap">
                 <TabsTrigger value="settings">Settings</TabsTrigger>
                 <TabsTrigger value="playground">Playground</TabsTrigger>
                 <TabsTrigger value="endpoint">Endpoint</TabsTrigger>
+                <TabsTrigger value="logging">Logging</TabsTrigger>
               </TabsList>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
@@ -235,6 +237,9 @@ export function AppShell() {
               </TabsContent>
               <TabsContent value="endpoint">
                 <EndpointPanel />
+              </TabsContent>
+              <TabsContent value="logging" className="flex h-full min-h-80 flex-col">
+                <LogPanel />
               </TabsContent>
             </div>
           </Tabs>

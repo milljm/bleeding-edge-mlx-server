@@ -1,6 +1,6 @@
 export type EngineKind = "lm" | "vlm" | "embed";
 export type FlagType = "number" | "text" | "bool" | "select";
-export type FlagGroup = "server" | "sampling" | "thinking";
+export type FlagGroup = "server" | "sampling" | "thinking" | "template";
 
 export type FlagDef = {
   key: string;
@@ -142,10 +142,10 @@ export const FLAG_DEFS: FlagDef[] = [
     key: "chatTemplate",
     flag: "--chat-template",
     label: "Chat template",
-    help: "Override tokenizer chat template.",
+    help: "Jinja chat template. Pull from Hugging Face if the checkpoint did not ship one (MiniMax / gpt-oss).",
     type: "text",
     engines: ["lm"],
-    advanced: true,
+    group: "template",
     default: "",
   },
   {
@@ -162,10 +162,10 @@ export const FLAG_DEFS: FlagDef[] = [
     key: "useDefaultChatTemplate",
     flag: "--use-default-chat-template",
     label: "Default chat template",
-    help: "Force the tokenizer default template.",
+    help: "Force the tokenizer default template instead of a custom one.",
     type: "bool",
     engines: ["lm"],
-    advanced: true,
+    group: "template",
     default: false,
   },
   {

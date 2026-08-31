@@ -11,7 +11,7 @@ from mlx_edge.pool import ModelPool, free_port, strip_bind_args
 
 class GatewayTests(unittest.TestCase):
     def setUp(self):
-        self.pool = ModelPool(spawn=lambda *_a, **_k: None, wait=lambda _port: None)
+        self.pool = ModelPool(spawn=lambda *_a, **_k: None, wait=lambda _port: None, keep_hot=False)
         self.port = free_port()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", self.port), make_handler(self.pool))
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -457,6 +457,75 @@ class GatewayTests(unittest.TestCase):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+    def test_logs_template_progress_float_and_channel_strip(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        self.pool.logs.append("demo", "lm", "Prompt processing progress: 1/2")
+        status, body = self._json("GET", "/v1/logs")
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get("object"), "edge.logs")
+        self.assertEqual(body["lines"][0]["level"], "progress")
+        status, body = self._json("POST", "/v1/logs/clear")
+        self.assertEqual(status, 200)
+        self.assertEqual(self._json("GET", "/v1/logs")[1]["lines"], [])
+
+        status, body = self._json("GET", "/v1/template?model=MiniMax-M2.7-ConfigI-MLX")
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get("preset"), "harmony")
+
+        idle = self._json("GET", "/v1/progress")[1]
+        self.assertIsInstance(idle.get("progress"), (int, float))
+        self.assertEqual(idle["progress"], 0.0)
+
+        class RecHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                payload = (
+                    b'{"choices":[{"message":{"role":"assistant","content":'
+                    b'"<|channel|>analysis<|message|>plan<|end|>'
+                    b'<|start|>assistant<|channel|>final<|message|>ok"}}]}'
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), RecHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-ConfigI-MLX",
+                engine="lm",
+                model="/models/MiniMax-M2.7-ConfigI-MLX",
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-ConfigI-MLX",
+            )
+            self.pool._models[item.id] = item
+            status, body = self._json(
+                "POST",
+                "/v1/chat/completions",
+                {"model": "minimax-m2.7-configi-mlx", "messages": [{"role": "user", "content": "hi"}]},
+            )
+            self.assertEqual(status, 200)
+            msg = body["choices"][0]["message"]
+            self.assertEqual(msg["content"], "ok")
+            self.assertEqual(msg["reasoning_content"], "plan")
+            self.assertNotIn("<|channel|>", msg["content"])
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
 
 
 if __name__ == "__main__":

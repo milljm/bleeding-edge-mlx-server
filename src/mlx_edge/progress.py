@@ -39,10 +39,28 @@ def now() -> float:
     return time.time()
 
 
-def _ratio(processed: int, total: int | None) -> float | None:
+def _ratio(processed: int, total: int | None) -> float:
     if not total or total <= 0:
-        return None
+        return 0.0
     return round(min(1.0, max(0.0, processed / total)), 4)
+
+
+def row_progress(row: dict[str, Any]) -> float:
+    """0.0 idle/unknown → 1.0 when prefill is done and tokens are decoding."""
+    phase = row.get("phase")
+    if phase in {"decode", "done"}:
+        return 1.0
+    if phase == "error":
+        prompt = row.get("prompt") or {}
+        value = prompt.get("ratio")
+        return float(value) if isinstance(value, (int, float)) else 0.0
+    if phase == "prefill":
+        prompt = row.get("prompt") or {}
+        value = prompt.get("ratio")
+        if isinstance(value, (int, float)):
+            return float(value)
+        return 0.0
+    return 0.0
 
 
 def _tps(processed: int, started_at: float | None, at: float) -> float | None:
@@ -58,7 +76,7 @@ def empty_prompt() -> dict[str, Any]:
     return {
         "processed_tokens": 0,
         "total_tokens": None,
-        "ratio": None,
+        "ratio": 0.0,
         "cached_tokens": None,
         "started_at": None,
         "updated_at": None,
@@ -82,6 +100,7 @@ def idle_row(model_id: str, engine: str) -> dict[str, Any]:
         "phase": "idle",
         "status": "ready",
         "stream": None,
+        "progress": 0.0,
         "prompt": empty_prompt(),
         "generation": empty_generation(),
         "error": None,
@@ -264,6 +283,7 @@ class ProgressTracker:
                     prompt["started_at"] = prompt["started_at"] or at
                     prompt["ratio"] = _ratio(processed, prompt["total_tokens"])
                     prompt["tokens_per_second"] = _tps(processed, prompt["started_at"], at)
+                    row["progress"] = row_progress(row)
                 else:
                     processed = int(event.get("processed") or prompt["processed_tokens"] or 0)
                     total = event.get("total") or processed
@@ -280,6 +300,7 @@ class ProgressTracker:
                     if row["phase"] == "prefill":
                         # Stay in prefill until the first generated token.
                         pass
+                    row["progress"] = row_progress(row)
             elif kind in {"decode_start", "decode", "decode_delta"}:
                 if row["phase"] != "decode":
                     row["phase"] = "decode"
@@ -289,6 +310,7 @@ class ProgressTracker:
                     prompt["processed_tokens"] = prompt["total_tokens"]
                     prompt["ratio"] = 1.0
                     prompt["updated_at"] = at
+                row["progress"] = row_progress(row)
                 if kind == "decode":
                     gen["tokens"] = int(event.get("tokens") or gen["tokens"])
                 elif kind == "decode_delta":
@@ -341,12 +363,21 @@ class ProgressTracker:
         if needle:
             rows = [row for row in rows if _ids_match(str(row.get("id") or ""), needle)]
         active = any(row.get("status") == "processing" for row in rows)
+        publics = [self._public(row) for row in rows]
+        overall = 0.0
+        if active:
+            overall = max((float(row.get("progress") or 0.0) for row in publics), default=0.0)
+        elif publics:
+            overall = max((float(row.get("progress") or 0.0) for row in publics), default=0.0)
+            if all(row.get("phase") == "idle" for row in publics):
+                overall = 0.0
         return {
             "object": OBJECT,
             "version": SCHEMA_VERSION,
             "generated_at": now(),
             "active": active,
-            "models": [self._public(row) for row in rows],
+            "progress": round(float(overall), 4),
+            "models": publics,
         }
 
     def wait(self, seq: int, timeout: float) -> int:
@@ -367,6 +398,7 @@ class ProgressTracker:
             "phase": row["phase"],
             "status": row["status"],
             "stream": row.get("stream"),
+            "progress": row_progress(row),
             "prompt": dict(row["prompt"]),
             "generation": dict(row["generation"]),
             "error": row.get("error"),
@@ -380,6 +412,7 @@ class ProgressTracker:
             prompt["processed_tokens"] = prompt["total_tokens"]
             prompt["ratio"] = 1.0
             prompt["updated_at"] = at
+        row["progress"] = row_progress(row)
 
     def _schedule_idle(self, model_id: str) -> None:
         self._cancel_timer(model_id)

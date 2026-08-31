@@ -14,7 +14,7 @@ from mlx_edge.pool import (
 
 class PoolTests(unittest.TestCase):
     def _pool(self) -> ModelPool:
-        return ModelPool(spawn=lambda *_a, **_k: None, wait=lambda *_a, **_k: None)
+        return ModelPool(spawn=lambda *_a, **_k: None, wait=lambda *_a, **_k: None, keep_hot=False)
 
     def test_hot_load_two_models(self):
         pool = self._pool()
@@ -127,11 +127,18 @@ class PoolTests(unittest.TestCase):
                 return None
 
         with mock.patch("urllib.request.urlopen", fake_urlopen):
-            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None)
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
             item = pool.load("embed", "/models/Qwen3-Embedding-0.6B")
         self.assertIn("/v1/embeddings", recorded["url"])
         self.assertEqual(recorded["body"]["model"], "/models/Qwen3-Embedding-0.6B")
         self.assertEqual(item.engine, "embed")
+
+    def test_load_does_not_fetch_template_for_hub_id(self):
+        with mock.patch("mlx_edge.pool.template_for_spawn", side_effect=lambda model, extra: extra) as tmpl:
+            pool = self._pool()
+            pool.load("lm", "qwen")
+            tmpl.assert_called_once()
+            self.assertEqual(tmpl.call_args[0][0], "qwen")
 
     def test_warmup_skipped_when_spawn_returns_none(self):
         with mock.patch("mlx_edge.pool.warmup_engine") as warm:

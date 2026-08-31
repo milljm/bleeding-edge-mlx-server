@@ -11,6 +11,7 @@ export type ModelRec = {
   context?: number | null;
   watchDir: string;
   source: "scan" | "manual";
+  hasChatTemplate?: boolean;
 };
 
 /** Common watch path (LM Studio). Kept as-is — never treated as a wipe sentinel. */

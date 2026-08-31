@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { deltaContent, getProgress, modelIsLive, type ModelProgress } from "@/lib/edge-api";
+import { deltaContent, deltaReasoning, getProgress, modelIsLive, type ModelProgress } from "@/lib/edge-api";
 import { loadTarget, publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
@@ -192,10 +192,14 @@ function ChatPlayground({ live }: { live: boolean }) {
               const data = line.slice(5).trim();
               if (!data || data === "[DONE]") continue;
               try {
-                const piece = deltaContent(JSON.parse(data));
+                const payload = JSON.parse(data);
+                const piece = deltaContent(payload);
+                const think = deltaReasoning(payload);
                 if (piece) {
                   assistant += piece;
                   paint(assistant);
+                } else if (think && !assistant) {
+                  paint("");
                 }
               } catch {
                 /* ignore malformed chunk */
@@ -229,7 +233,7 @@ function ChatPlayground({ live }: { live: boolean }) {
   }
 
   const prefill = progress?.phase === "prefill" ? progress.prompt : null;
-  const prefillPct = prefill?.ratio != null ? Math.round(prefill.ratio * 100) : null;
+  const prefillPct = progress?.phase === "prefill" ? Math.round((progress.progress ?? 0) * 100) : null;
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">

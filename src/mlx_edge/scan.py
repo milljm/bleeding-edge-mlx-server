@@ -193,7 +193,20 @@ def _describe(
         "context": _infer_context(cfg),
         "watchDir": typed_dir,
         "source": "scan",
+        "hasChatTemplate": _has_chat_template(path),
     }
+
+
+def _has_chat_template(path: Path) -> bool:
+    if (path / "chat_template.jinja").is_file():
+        return True
+    cfg = _read_config(path / "tokenizer_config.json")
+    tmpl = cfg.get("chat_template")
+    if isinstance(tmpl, str) and tmpl.strip():
+        return True
+    if isinstance(tmpl, list) and tmpl:
+        return True
+    return False
 
 
 def _is_model_dir(path: Path) -> bool:

@@ -17,7 +17,7 @@ import {
   type ServedRuntime,
 } from "./edge-api";
 
-export type StudioTab = "settings" | "playground" | "endpoint";
+export type StudioTab = "settings" | "playground" | "endpoint" | "logging";
 
 type StudioState = {
   watchDirs: string[];
