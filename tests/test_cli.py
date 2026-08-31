@@ -19,6 +19,39 @@ class CliTests(unittest.TestCase):
         self.assertIn("load", help_text)
         self.assertIn("unload", help_text)
 
+    def test_serve_parses_gui_flag(self):
+        parser = build_parser()
+        args = parser.parse_args(["serve", "--gui", "--no-browser", "--host", "0.0.0.0"])
+        self.assertTrue(args.gui)
+        self.assertTrue(args.no_browser)
+        self.assertEqual(args.host, "0.0.0.0")
+
+    def test_gui_main_help(self):
+        from mlx_edge.cli import gui_main
+
+        with self.assertRaises(SystemExit) as ctx:
+            gui_main(["--help"])
+        self.assertEqual(ctx.exception.code, 0)
+
+    def test_gui_without_assets_fails(self):
+        from mlx_edge.cli import cmd_serve
+
+        args = mock.Mock(
+            host="127.0.0.1",
+            port=0,
+            gui=True,
+            no_browser=True,
+            lm=[],
+            vlm=[],
+            engine=None,
+            model=[],
+        )
+        buf = io.StringIO()
+        with mock.patch("mlx_edge.gateway.bundled_web_dir", return_value=None), mock.patch("sys.stderr", buf):
+            rc = cmd_serve(args, [])
+        self.assertEqual(rc, 1)
+        self.assertIn("GUI assets missing", buf.getvalue())
+
     def test_serve_parses_without_engine(self):
         parser = build_parser()
         args = parser.parse_args(["serve", "--host", "0.0.0.0", "--port", "9000"])

@@ -98,12 +98,54 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body.get("models"), ["a", "b"])
         self.assertEqual(body.get("model"), "a")
+        self.assertEqual(body.get("url"), f"http://127.0.0.1:{self.port}/v1")
+        self.assertEqual(body.get("bind"), f"127.0.0.1:{self.port}")
 
     def test_strip_bind_args(self):
         self.assertEqual(
             strip_bind_args(["--temp", "0.2", "--host", "0.0.0.0", "--port", "9", "--max-tokens", "64"]),
             ["--temp", "0.2", "--max-tokens", "64"],
         )
+
+    def test_gui_static(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from mlx_edge.gateway import make_handler, public_base
+
+        info = public_base("127.0.0.1", 8080)
+        self.assertEqual(info["url"], "http://127.0.0.1:8080/v1")
+        wild = public_base("0.0.0.0", 9000)
+        self.assertEqual(wild["bind"], "0.0.0.0:9000")
+        self.assertTrue(str(wild["url"]).endswith(":9000/v1"))
+        self.assertNotIn("0.0.0.0", str(wild["url"]))
+
+        from mlx_edge.gateway import bundled_web_dir
+
+        bundled = bundled_web_dir()
+        self.assertIsNotNone(bundled)
+        self.assertTrue((bundled / "index.html").is_file())
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "index.html").write_text("<html>edge-gui</html>", encoding="utf-8")
+            (root / "assets").mkdir()
+            (root / "assets" / "app.js").write_text("console.log('ok')", encoding="utf-8")
+            pool = ModelPool(spawn=lambda *_a, **_k: None, wait=lambda _port: None)
+            port = free_port()
+            httpd = ThreadingHTTPServer(("127.0.0.1", port), make_handler(pool, static_dir=root))
+            thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as resp:
+                    self.assertEqual(resp.status, 200)
+                    self.assertIn(b"edge-gui", resp.read())
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/assets/app.js", timeout=5) as resp:
+                    self.assertEqual(resp.headers.get_content_type(), "text/javascript")
+                    self.assertIn(b"console.log", resp.read())
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
 
 
 if __name__ == "__main__":

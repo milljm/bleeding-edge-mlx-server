@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 from mlx_edge.pool import LoadedModel, ModelPool
 
@@ -16,6 +18,54 @@ CORS = {
     "Access-Control-Allow-Headers": "authorization, content-type",
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 }
+
+STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".json": "application/json",
+    ".map": "application/json",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".ico": "image/x-icon",
+    ".webp": "image/webp",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+def bundled_web_dir() -> Path | None:
+    path = Path(__file__).resolve().parent / "web"
+    if (path / "index.html").is_file():
+        return path
+    return None
+
+
+def lan_ipv4() -> str | None:
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = str(sock.getsockname()[0])
+        sock.close()
+        return ip
+    except OSError:
+        return None
+
+
+def public_base(host: str, port: int) -> dict[str, object]:
+    raw = host or "127.0.0.1"
+    wildcard = raw in {"0.0.0.0", "::", "[::]", "::0"}
+    advertised = (lan_ipv4() or "127.0.0.1") if wildcard else raw
+    return {
+        "host": advertised,
+        "port": int(port),
+        "bind": f"{raw}:{int(port)}",
+        "url": f"http://{advertised}:{int(port)}/v1",
+    }
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -32,7 +82,9 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return data
 
 
-def make_handler(pool: ModelPool) -> type[BaseHTTPRequestHandler]:
+def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[BaseHTTPRequestHandler]:
+    web = Path(static_dir).resolve() if static_dir else None
+
     class GatewayHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
             sys_stderr = __import__("sys").stderr
@@ -51,20 +103,53 @@ def make_handler(pool: ModelPool) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
+        def _bytes(self, payload: bytes, content_type: str, status: int = 200) -> None:
+            self.send_response(status)
+            self._cors()
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def _static(self, raw_path: str) -> bool:
+            if web is None:
+                return False
+            rel = unquote(raw_path.split("?", 1)[0]).lstrip("/") or "index.html"
+            if rel.startswith("v1/") or rel == "v1":
+                return False
+            target = (web / rel).resolve()
+            try:
+                target.relative_to(web)
+            except ValueError:
+                return False
+            if target.is_file():
+                self._bytes(target.read_bytes(), STATIC_TYPES.get(target.suffix.lower(), "application/octet-stream"))
+                return True
+            index = web / "index.html"
+            if index.is_file() and not Path(rel).suffix:
+                self._bytes(index.read_bytes(), "text/html; charset=utf-8")
+                return True
+            return False
+
         def do_OPTIONS(self) -> None:  # noqa: N802
             self.send_response(204)
             self._cors()
             self.end_headers()
 
         def do_GET(self) -> None:  # noqa: N802
-            path = urlparse(self.path).path.rstrip("/") or "/"
+            raw_path = urlparse(self.path).path
+            path = raw_path.rstrip("/") or "/"
             if path == "/health":
                 models = [item.model for item in pool.list()]
-                self._json({"status": "ok", "models": models, "model": models[0] if models else None})
+                bind_host, bind_port = self.server.server_address[:2]
+                info = public_base(str(bind_host), int(bind_port))
+                self._json({"status": "ok", "models": models, "model": models[0] if models else None, **info})
                 return
             if path == "/v1/models":
                 data = [item.as_openai() for item in pool.list()]
                 self._json({"object": "list", "data": data})
+                return
+            if self._static(raw_path):
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
 
@@ -199,8 +284,13 @@ def _proxy_to(handler: BaseHTTPRequestHandler, item: LoadedModel, body: bytes) -
         handler.wfile.write(msg)
 
 
-def serve_forever(pool: ModelPool, host: str, port: int) -> None:
-    httpd = ThreadingHTTPServer((host, port), make_handler(pool))
+def serve_forever(
+    pool: ModelPool,
+    host: str,
+    port: int,
+    static_dir: Path | str | None = None,
+) -> None:
+    httpd = ThreadingHTTPServer((host, port), make_handler(pool, static_dir=static_dir))
     try:
         httpd.serve_forever()
     finally:

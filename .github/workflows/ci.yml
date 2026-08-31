@@ -23,5 +23,4 @@ jobs:
           mlx-edge engines
           mlx-edge status --offline
           mlx-edge which
-          mlx-edge serve --help
-          mlx-edge load --help
+          edge-gui --help

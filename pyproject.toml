@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlx-edge"
-version = "0.2.0"
-description = "Hot-load mlx-lm and mlx-vlm onto one OpenAI /v1 gateway."
+version = "0.3.0"
+description = "Hot-load mlx-lm and mlx-vlm onto one OpenAI /v1 gateway, with an Edge GUI."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -28,9 +28,13 @@ Issues = "https://github.com/milljm/bleeding-edge-mlx-server/issues"
 
 [project.scripts]
 mlx-edge = "mlx_edge.cli:main"
+edge-gui = "mlx_edge.cli:gui_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.setuptools.package-data]
+mlx_edge = ["web/**/*"]

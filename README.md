@@ -1,9 +1,8 @@
 # Bleeding Edge MLX Server
 
 Edge is a local OpenAI-compatible gateway for Apple Silicon. It hot-loads
-`mlx-lm` and `mlx-vlm` models side by side on one host/port. Chat tools speak
-`/v1/models` and `/v1/chat/completions` and pick an engine with the `model`
-field.
+`mlx-lm` and `mlx-vlm` models side by side on one host/port. `edge-gui` is the
+studio: Serve talks to `mlx-edge` over `/v1`. Chat tools use the same URL.
 
 Compiled `mlx` comes from a wheel. The Python engines install from git HEAD so
 new architectures land without waiting on a conda-forge rebuild.
@@ -19,15 +18,35 @@ conda activate edge
 git clone https://github.com/milljm/bleeding-edge-mlx-server.git
 cd bleeding-edge-mlx-server
 uv pip install -r requirements.txt
-mlx-edge serve
+edge-gui
 ```
 
 `git` is in the conda create because `requirements.txt` pulls `mlx-lm` and
 `mlx-vlm` from git HEAD. `uv pip` targets the active conda env (`CONDA_PREFIX`).
-`mlx-edge serve` is the gateway — there is no `--do-stuff`. It stays up with an
-empty pool until you load models.
+
+`edge-gui` starts the gateway **and** the studio on the same host/port, then
+opens a browser. The footer shows the OpenAI base URL:
+
+```
+Serving on http://127.0.0.1:8080/v1
+```
+
+Point any OpenAI-compatible chat client at that address. Serve in the GUI
+hot-loads a model by calling `mlx-edge` (`POST /v1/load`). Unload drops only
+that one.
+
+Remote clients (another machine on the LAN):
 
 ```bash
+edge-gui --host 0.0.0.0 --port 8080
+```
+
+The footer then shows your LAN address, e.g. `http://192.168.1.50:8080/v1`.
+
+Headless (no GUI):
+
+```bash
+mlx-edge serve --host 127.0.0.1 --port 8080
 mlx-edge load --engine lm --model mlx-community/Qwen3-8B-4bit
 mlx-edge load --engine vlm --model mlx-community/Qwen2.5-VL-7B-Instruct-4bit
 ```
@@ -35,7 +54,7 @@ mlx-edge load --engine vlm --model mlx-community/Qwen2.5-VL-7B-Instruct-4bit
 Or preload at start:
 
 ```bash
-mlx-edge serve --host 127.0.0.1 --port 8080 \
+edge-gui --host 127.0.0.1 --port 8080 \
   --lm mlx-community/Qwen3-8B-4bit \
   --vlm mlx-community/Qwen2.5-VL-7B-Instruct-4bit
 ```
@@ -55,7 +74,7 @@ You will need to `conda activate edge` in every new shell.
 conda activate edge
 mlx-edge update          # refresh git HEAD of mlx-lm and mlx-vlm
 mlx-edge status          # local vs conda-forge vs PyPI vs git
-mlx-edge serve --host 127.0.0.1 --port 8080
+edge-gui
 ```
 
 `mlx-edge update` runs `pip install --upgrade --force-reinstall --no-deps git+…`
@@ -69,6 +88,7 @@ so pip cannot replace the compiled `mlx` wheel.
 | Text engine | `mlx-lm` | git overlay | Pure Python. Tracks new LLM architectures. |
 | Vision engine | `mlx-vlm` | git overlay | Pure Python. Tracks VLMs / omni models. |
 | CLI | `mlx-edge` | this repo | `serve`, `load`, `unload`, `update`, `status`. |
+| GUI | `edge-gui` | this repo | Studio that drives the CLI over `/v1`. |
 
 ## Safety
 
@@ -86,7 +106,8 @@ mlx-edge update lm --ref abc123  # one engine, one commit
 ## CLI
 
 ```
-mlx-edge serve [--host 127.0.0.1] [--port 8080] [--lm MODEL]... [--vlm MODEL]...
+edge-gui [--host 127.0.0.1] [--port 8080] [--lm MODEL]... [--vlm MODEL]... [--no-browser]
+mlx-edge serve [--host 127.0.0.1] [--port 8080] [--gui] [--lm MODEL]... [--vlm MODEL]...
 mlx-edge load --engine lm|vlm --model MODEL [engine flags…]
 mlx-edge unload --model MODEL
 mlx-edge models
@@ -111,15 +132,26 @@ mlx-edge serve --engine lm --model mlx-community/Qwen3-8B-4bit
 
 Gateway (defaults `127.0.0.1:8080`):
 
+- `GET /` — Edge GUI (`edge-gui` / `mlx-edge serve --gui`)
 - `GET /v1/models` — every hot-loaded model
 - `POST /v1/chat/completions` — routed by `model`
 - `POST /v1/completions` — routed by `model`
 - `POST /v1/load` — hot-load `{engine, model, args?}`
 - `POST /v1/unload` — unload `{model}`
-- `GET /health`
+- `GET /health` — `{status, models, host, port, bind, url}`
 
-Each loaded model is its own `mlx_lm.server` / `mlx_vlm.server` child on a
-loopback ephemeral port. The gateway is the one OpenAI URL.
+Each loaded model is its own `mlx_lm.server` / `mlx_vlm.server` child. The
+gateway is the one OpenAI URL.
+
+## GUI source
+
+`gui/` is the studio. Prebuilt files ship in `src/mlx_edge/web/` so `edge-gui`
+does not need Node. To rebuild the bundle:
+
+```bash
+npm install
+npm run build:gui
+```
 
 ## Doctor
 

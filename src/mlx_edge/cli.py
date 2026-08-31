@@ -19,7 +19,7 @@ from typing import Any
 from mlx_edge import __version__
 from mlx_edge.engines import ENGINES, PYTHON_ENGINES, Engine, get_engine, resolve_targets
 
-USER_AGENT = "mlx-edge/0.2.0"
+USER_AGENT = "mlx-edge/0.3.0"
 PIN_PATH = Path.home() / ".config" / "mlx-edge" / "pins.json"
 GATEWAY_PATH = Path.home() / ".config" / "mlx-edge" / "gateway.json"
 
@@ -273,11 +273,20 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace, rest: list[str]) -> int:
-    from mlx_edge.gateway import serve_forever
+    import threading
+    import webbrowser
+
+    from mlx_edge.gateway import bundled_web_dir, public_base, serve_forever
     from mlx_edge.pool import ModelPool
 
     host = args.host or "127.0.0.1"
     port = int(args.port or 8080)
+    gui = bool(getattr(args, "gui", False))
+    static_dir = bundled_web_dir() if gui else None
+    if gui and static_dir is None:
+        print(red("GUI assets missing. Rebuild gui/ (npm run build:gui) and reinstall."), file=sys.stderr)
+        return 1
+
     preloads: list[tuple[str, str]] = []
     for model in args.lm or []:
         preloads.append(("lm", model))
@@ -300,17 +309,26 @@ def cmd_serve(args: argparse.Namespace, rest: list[str]) -> int:
             pool.unload_all()
             return 1
 
+    info = public_base(host, port)
+    url = str(info["url"])
     GATEWAY_PATH.parent.mkdir(parents=True, exist_ok=True)
     GATEWAY_PATH.write_text(json.dumps({"host": host, "port": port}) + "\n")
-    print(bold(f"mlx-edge gateway {host}:{port}"))
+    print(bold(f"Serving on {url}"))
+    print(dim(f"  bind {info['bind']}"))
+    if gui:
+        page = url[: -len("/v1")] + "/"
+        print(dim(f"  GUI  {page}"))
     if preloads:
         for item in pool.list():
             print(dim(f"  {item.engine:<4} {item.model}"))
     else:
-        print(dim("  empty pool. mlx-edge load --engine lm --model …"))
+        print(dim("  empty pool. Serve from the GUI, or mlx-edge load --engine lm --model …"))
     print(dim("  GET /v1/models  POST /v1/chat/completions  POST /v1/load"))
+    if gui and not getattr(args, "no_browser", False):
+        page = url[: -len("/v1")] + "/"
+        threading.Timer(0.6, lambda: webbrowser.open(page)).start()
     try:
-        serve_forever(pool, host, port)
+        serve_forever(pool, host, port, static_dir=static_dir)
     except KeyboardInterrupt:
         print()
         print(dim("stopping"))
@@ -512,6 +530,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--vlm", action="append", default=[], metavar="MODEL", help="preload an mlx-vlm model (repeatable)")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8080)
+    p_serve.add_argument("--gui", action="store_true", help="serve the Edge GUI on the same host/port")
+    p_serve.add_argument("--no-browser", action="store_true", help="do not open a browser (with --gui)")
     p_serve.set_defaults(func=None, _serve=True)
 
     p_load = sub.add_parser("load", help="hot-load a model onto a running gateway")
@@ -543,6 +563,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_engines.set_defaults(func=cmd_engines)
 
     return parser
+
+
+def gui_main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    parser = argparse.ArgumentParser(
+        prog="edge-gui",
+        description="Start the Edge GUI. Controls mlx-edge on the same host/port.",
+    )
+    parser.add_argument("--host", default="127.0.0.1", help="Bind address. Use 0.0.0.0 for remote clients.")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--lm", action="append", default=[], metavar="MODEL", help="preload an mlx-lm model")
+    parser.add_argument("--vlm", action="append", default=[], metavar="MODEL", help="preload an mlx-vlm model")
+    parser.add_argument("--no-browser", action="store_true")
+    args, rest = parser.parse_known_args(argv)
+    args.engine = None
+    args.model = []
+    args.gui = True
+    return cmd_serve(args, rest)
 
 
 def main(argv: list[str] | None = None) -> int:
