@@ -292,11 +292,13 @@ def cmd_serve(args: argparse.Namespace, rest: list[str]) -> int:
         preloads.append(("lm", model))
     for model in args.vlm or []:
         preloads.append(("vlm", model))
+    for model in getattr(args, "embed", None) or []:
+        preloads.append(("embed", model))
     if args.engine and args.model:
         for model in args.model:
             preloads.append((args.engine, model))
     elif args.model and not args.engine:
-        print(red("--model requires --engine lm|vlm (or pass --lm / --vlm)"), file=sys.stderr)
+        print(red("--model requires --engine lm|vlm|embed (or pass --lm / --vlm / --embed)"), file=sys.stderr)
         return 2
 
     pool = ModelPool()
@@ -323,7 +325,7 @@ def cmd_serve(args: argparse.Namespace, rest: list[str]) -> int:
             print(dim(f"  {item.engine:<4} {item.model}"))
     else:
         print(dim("  empty pool. Serve from the GUI, or mlx-edge load --engine lm --model …"))
-    print(dim("  GET /v1/models  POST /v1/chat/completions  GET /v1/progress  POST /v1/load"))
+    print(dim("  GET /v1/models  POST /v1/chat/completions  POST /v1/embeddings  GET /v1/progress  POST /v1/load"))
     if gui and not getattr(args, "no_browser", False):
         page = url[: -len("/v1")] + "/"
         threading.Timer(0.6, lambda: webbrowser.open(page)).start()
@@ -493,7 +495,7 @@ def cmd_engines(_args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mlx-edge",
-        description="Hot-load mlx-lm / mlx-vlm onto one OpenAI /v1 gateway.",
+        description="Hot-load mlx-lm / mlx-vlm / embeddings onto one OpenAI /v1 gateway.",
     )
     parser.add_argument("--version", action="version", version=f"mlx-edge {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -524,10 +526,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_rollback.set_defaults(func=cmd_rollback)
 
     p_serve = sub.add_parser("serve", help="OpenAI /v1 gateway; hot-load models beside each other")
-    p_serve.add_argument("--engine", choices=("lm", "vlm"), help="used with --model (repeatable)")
+    p_serve.add_argument("--engine", choices=("lm", "vlm", "embed"), help="used with --model (repeatable)")
     p_serve.add_argument("--model", action="append", default=[], help="preload with --engine (repeatable)")
     p_serve.add_argument("--lm", action="append", default=[], metavar="MODEL", help="preload an mlx-lm model (repeatable)")
     p_serve.add_argument("--vlm", action="append", default=[], metavar="MODEL", help="preload an mlx-vlm model (repeatable)")
+    p_serve.add_argument("--embed", action="append", default=[], metavar="MODEL", help="preload an embedding model (repeatable)")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8080)
     p_serve.add_argument("--gui", action="store_true", help="serve the Edge GUI on the same host/port")
@@ -535,7 +538,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.set_defaults(func=None, _serve=True)
 
     p_load = sub.add_parser("load", help="hot-load a model onto a running gateway")
-    p_load.add_argument("--engine", required=True, choices=("lm", "vlm"))
+    p_load.add_argument("--engine", required=True, choices=("lm", "vlm", "embed"))
     p_load.add_argument("--model", required=True)
     p_load.add_argument("--host")
     p_load.add_argument("--port", type=int)
@@ -575,6 +578,7 @@ def gui_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--lm", action="append", default=[], metavar="MODEL", help="preload an mlx-lm model")
     parser.add_argument("--vlm", action="append", default=[], metavar="MODEL", help="preload an mlx-vlm model")
+    parser.add_argument("--embed", action="append", default=[], metavar="MODEL", help="preload an embedding model")
     parser.add_argument("--no-browser", action="store_true")
     args, rest = parser.parse_known_args(argv)
     args.engine = None

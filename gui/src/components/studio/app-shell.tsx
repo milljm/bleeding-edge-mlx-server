@@ -335,6 +335,8 @@ function useRehydrateStudio() {
   const syncServed = useStudio((s) => s.syncServed);
   const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
   const applyPrefs = useStudio((s) => s.applyPrefs);
+  const persistPrefs = useStudio((s) => s.persistPrefs);
+  const setHydrated = useStudio((s) => s.setHydrated);
   useEffect(() => {
     const api = useStudio.persist;
     let cancelled = false;
@@ -346,6 +348,13 @@ function useRehydrateStudio() {
           applyPrefs(await getPrefs());
         } catch {
           /* localStorage watch dirs still apply */
+        }
+        if (cancelled) return;
+        setHydrated();
+        try {
+          if (useStudio.getState().watchDirs.length) await persistPrefs();
+        } catch {
+          /* empty or unreachable prefs are fine */
         }
         if (cancelled) return;
         try {
@@ -363,5 +372,5 @@ function useRehydrateStudio() {
     return () => {
       cancelled = true;
     };
-  }, [syncServed, scanWatchDirs, applyPrefs]);
+  }, [syncServed, scanWatchDirs, applyPrefs, persistPrefs, setHydrated]);
 }

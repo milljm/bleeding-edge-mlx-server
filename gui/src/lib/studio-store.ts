@@ -35,6 +35,7 @@ type StudioState = {
   scanErrors: ScanError[];
   loadingId: string | null;
   failed: Record<string, string>;
+  hydrated: boolean;
   addWatchDir: (dir: string) => Promise<void>;
   removeWatchDir: (dir: string) => Promise<void>;
   setDirDraft: (value: string) => void;
@@ -42,6 +43,7 @@ type StudioState = {
   setFlag: (key: string, value: string | number | boolean) => void;
   resetFlags: () => void;
   setTab: (tab: StudioTab) => void;
+  setHydrated: () => void;
   applyPrefs: (prefs: { watchDirs?: string[]; flagsByModel?: Record<string, FlagValues> }) => void;
   persistPrefs: () => Promise<void>;
   scanWatchDirs: () => Promise<void>;
@@ -92,6 +94,7 @@ export const useStudio = create<StudioState>()(
       scanErrors: [],
       loadingId: null,
       failed: {},
+      hydrated: false,
       addWatchDir: async (dir) => {
         const trimmed = dir.trim();
         if (!trimmed) return;
@@ -129,6 +132,7 @@ export const useStudio = create<StudioState>()(
         void get().persistPrefs();
       },
       setTab: (tab) => set({ tab }),
+      setHydrated: () => set({ hydrated: true }),
       applyPrefs: (prefs) => {
         const fromServer = migrateWatchDirs(prefs.watchDirs);
         const watchDirs = fromServer.length ? fromServer : migrateWatchDirs(get().watchDirs);
@@ -136,9 +140,9 @@ export const useStudio = create<StudioState>()(
         const model = get().models.find((m) => m.id === get().selectedId);
         const flags = flagsForModel(model, model ? flagsByModel[flagKey(model)] : get().flags);
         set({ watchDirs, flagsByModel, flags });
-        if (!fromServer.length && watchDirs.length) void get().persistPrefs();
       },
       persistPrefs: async () => {
+        if (!get().hydrated) return;
         const { watchDirs, flagsByModel } = get();
         try {
           await putPrefs({ watchDirs, flagsByModel });
@@ -201,7 +205,7 @@ export const useStudio = create<StudioState>()(
             gateway,
             loadingId: null,
             failed: stillFailed,
-            tab: opts?.stay ? get().tab : "playground",
+            tab: opts?.stay ? get().tab : model.engine === "embed" ? "endpoint" : "playground",
           });
         } catch (err) {
           set({
@@ -239,6 +243,17 @@ export const useStudio = create<StudioState>()(
         flagsByModel: s.flagsByModel,
         flags: s.flags,
       }),
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<StudioState>;
+        const persistedDirs = migrateWatchDirs(p.watchDirs);
+        return {
+          ...current,
+          ...p,
+          watchDirs: persistedDirs.length ? persistedDirs : current.watchDirs,
+          flagsByModel: p.flagsByModel ?? current.flagsByModel,
+          hydrated: false,
+        };
+      },
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         state.watchDirs = migrateWatchDirs(state.watchDirs);
@@ -253,6 +268,7 @@ export const useStudio = create<StudioState>()(
         state.scanErrors = [];
         state.loadingId = null;
         state.failed = {};
+        state.hydrated = false;
       },
     },
   ),

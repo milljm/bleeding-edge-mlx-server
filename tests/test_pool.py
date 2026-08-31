@@ -1,6 +1,15 @@
+import json
 import unittest
+from unittest import mock
 
-from mlx_edge.pool import ModelPool, names_match, server_argv, unique_public_id, wait_healthy
+from mlx_edge.pool import (
+    ModelPool,
+    names_match,
+    server_argv,
+    spawn_argv,
+    unique_public_id,
+    wait_healthy,
+)
 
 
 class PoolTests(unittest.TestCase):
@@ -68,6 +77,67 @@ class PoolTests(unittest.TestCase):
         argv = server_argv("lm")
         self.assertEqual(argv[-2:], ["mlx_lm", "server"])
         self.assertNotIn("mlx_lm.server", argv)
+
+    def test_embed_spawn_uses_embedding_model_flag(self):
+        argv = spawn_argv("embed", "/models/Qwen3-Embedding-0.6B", 9, ["--host", "0.0.0.0", "--model", "nope"])
+        self.assertIn("mlx_vlm.server", argv)
+        self.assertIn("--embedding-model", argv)
+        self.assertEqual(argv[argv.index("--embedding-model") + 1], "/models/Qwen3-Embedding-0.6B")
+        self.assertNotIn("--model", argv)
+        self.assertEqual(argv[argv.index("--port") + 1], "9")
+
+    def test_embed_openai_owned_by(self):
+        pool = self._pool()
+        item = pool.load("embed", "/models/Qwen3-Embedding-0.6B")
+        self.assertEqual(item.as_openai()["owned_by"], "mlx-embed")
+        self.assertEqual(item.as_openai()["id"], "Qwen3-Embedding-0.6B")
+
+    def test_warmup_embed_posts_embeddings(self):
+        recorded: dict = {}
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return b'{"data":[]}'
+
+        def fake_urlopen(req, timeout=None):
+            recorded["url"] = req.full_url
+            recorded["body"] = json.loads(req.data.decode())
+            recorded["timeout"] = timeout
+            return FakeResp()
+
+        class DummyProc:
+            stdout = None
+
+            def poll(self):
+                return None
+
+            def terminate(self):
+                return None
+
+            def wait(self, timeout=None):
+                return 0
+
+            def kill(self):
+                return None
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None)
+            item = pool.load("embed", "/models/Qwen3-Embedding-0.6B")
+        self.assertIn("/v1/embeddings", recorded["url"])
+        self.assertEqual(recorded["body"]["model"], "/models/Qwen3-Embedding-0.6B")
+        self.assertEqual(item.engine, "embed")
+
+    def test_warmup_skipped_when_spawn_returns_none(self):
+        with mock.patch("mlx_edge.pool.warmup_engine") as warm:
+            pool = self._pool()
+            pool.load("lm", "qwen")
+            warm.assert_not_called()
 
     def test_wait_aborts_when_process_exits(self):
         class Dead:

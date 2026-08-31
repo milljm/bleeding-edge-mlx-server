@@ -1,4 +1,4 @@
-import type { EngineKind, FlagValues } from "./flags";
+import { engineFromOwnedBy, type EngineKind, type FlagValues } from "./flags";
 import type { ModelRec } from "./models";
 
 export type ServedRuntime = {
@@ -96,7 +96,7 @@ export async function listServed(gateway: GatewayInfo): Promise<ServedRuntime[]>
       id: repo,
       name: repo.split("/").filter(Boolean).pop() || repo,
       repo,
-      engine: row.owned_by === "mlx-vlm" ? "vlm" : "lm",
+      engine: engineFromOwnedBy(row.owned_by),
       host: gateway.host,
       port: gateway.port,
       startedAt: (row.created ?? 0) * 1000,
@@ -222,4 +222,3 @@ export function deltaContent(payload: unknown): string {
   const message = choice?.message?.content;
   return typeof message === "string" ? message : "";
 }
-

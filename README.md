@@ -1,8 +1,9 @@
 # Bleeding Edge MLX Server
 
 Edge is a local OpenAI-compatible gateway for Apple Silicon. It hot-loads
-`mlx-lm` and `mlx-vlm` models side by side on one host/port. `edge-gui` is the
-studio: Serve talks to `mlx-edge` over `/v1`. Chat tools use the same URL.
+`mlx-lm`, `mlx-vlm`, and embedding models side by side on one host/port.
+`edge-gui` is the studio: Serve talks to `mlx-edge` over `/v1`. Chat tools use
+the same URL.
 
 Compiled `mlx` comes from a wheel. The Python engines install from git HEAD so
 new architectures land without waiting on a conda-forge rebuild.
@@ -35,7 +36,8 @@ Point any OpenAI-compatible chat client at that address. `GET /v1/models`
 lists each loaded engine by **basename** (`MiniMax-M2.7-ConfigI-MLX`), not the
 full disk path. Chat `model` may be that basename (any case), `org/name`, or
 the path. Watch folders and per-model settings persist in
-`~/.config/mlx-edge/studio.json`.
+`~/.config/mlx-edge/studio.json` (including `~/.lmstudio/models` if that is the
+folder you added).
 
 Remote clients (another machine on the LAN):
 
@@ -51,6 +53,7 @@ Headless (no GUI):
 mlx-edge serve --host 127.0.0.1 --port 8080
 mlx-edge load --engine lm --model mlx-community/Qwen3-8B-4bit
 mlx-edge load --engine vlm --model mlx-community/Qwen2.5-VL-7B-Instruct-4bit
+mlx-edge load --engine embed --model mlx-community/Qwen3-Embedding-0.6B-4bit
 ```
 
 Or preload at start:
@@ -58,11 +61,13 @@ Or preload at start:
 ```bash
 edge-gui --host 127.0.0.1 --port 8080 \
   --lm mlx-community/Qwen3-8B-4bit \
-  --vlm mlx-community/Qwen2.5-VL-7B-Instruct-4bit
+  --vlm mlx-community/Qwen2.5-VL-7B-Instruct-4bit \
+  --embed mlx-community/Qwen3-Embedding-0.6B-4bit
 ```
 
 `GET /v1/models` lists everything currently loaded. `POST /v1/chat/completions`
-routes on `model`. Unload one without touching the others:
+routes on `model`. `POST /v1/embeddings` routes to a loaded `embed` engine.
+Unload one without touching the others:
 
 ```bash
 mlx-edge unload --model mlx-community/Qwen3-8B-4bit
@@ -88,9 +93,34 @@ so pip cannot replace the compiled `mlx` wheel.
 | --- | --- | --- | --- |
 | Runtime | `mlx` | PyPI wheel (or conda-forge) | Compiled Metal. Do not rebuild from git unless you mean to. |
 | Text engine | `mlx-lm` | git overlay | Pure Python. Tracks new LLM architectures. |
-| Vision engine | `mlx-vlm` | git overlay | Pure Python. Tracks VLMs / omni models. |
+| Vision engine | `mlx-vlm` | git overlay | Pure Python. Tracks VLMs / omni models. Also serves embeddings. |
 | CLI | `mlx-edge` | this repo | `serve`, `load`, `unload`, `update`, `status`. |
 | GUI | `edge-gui` | this repo | Studio that drives the CLI over `/v1`. |
+
+Dedicated embedding checkpoints (Qwen3-Embedding, bge, e5, gte, nomic, MiniLM)
+scan as engine `embed` and spawn `mlx_vlm.server --embedding-model PATH` — they
+do not go through mlx-lm, which has no embeddings endpoint.
+
+## Hot-load vs LM Studio
+
+Edge **does** keep several models resident: each Serve starts its own
+`mlx_lm.server` / `mlx_vlm.server` child and leaves the others running. Switching
+`model` on `/v1` is a route to a process that is already up, not an unload.
+
+LM Studio’s mlx-engine is **one process** with several ModelKits on one Metal
+device, so flipping A → B is an in-process handle switch. mlx-lm’s server holds
+one model at a time, so Edge’s way to keep two chat models loaded is two
+processes. The extra seconds you see on the first token after a switch are:
+
+1. Metal context switch between processes
+2. Graph compile on a cold shape (Edge now warms a 1-token request after Serve)
+3. Prompt prefill of *this* request (see `GET /v1/progress`) — that cost exists
+   in LM Studio too on a long prompt
+
+RAG should Serve the embedding model **and** the chat model. Embeddings run in
+their own process; they do not add delay to a chat child that is already loaded.
+The RAG round-trip (embed → retrieve → chat with a longer prompt) is extra work
+in your client, not an Edge unload.
 
 ## Safety
 
@@ -108,9 +138,9 @@ mlx-edge update lm --ref abc123  # one engine, one commit
 ## CLI
 
 ```
-edge-gui [--host 127.0.0.1] [--port 8080] [--lm MODEL]... [--vlm MODEL]... [--no-browser]
-mlx-edge serve [--host 127.0.0.1] [--port 8080] [--gui] [--lm MODEL]... [--vlm MODEL]...
-mlx-edge load --engine lm|vlm --model MODEL [engine flags…]
+edge-gui [--host 127.0.0.1] [--port 8080] [--lm MODEL]... [--vlm MODEL]... [--embed MODEL]... [--no-browser]
+mlx-edge serve [--host 127.0.0.1] [--port 8080] [--gui] [--lm MODEL]... [--vlm MODEL]... [--embed MODEL]...
+mlx-edge load --engine lm|vlm|embed --model MODEL [engine flags…]
 mlx-edge unload --model MODEL
 mlx-edge models
 mlx-edge status [--json] [--offline]
@@ -136,12 +166,13 @@ Gateway (defaults `127.0.0.1:8080`):
 
 - `GET /` — Edge GUI (`edge-gui` / `mlx-edge serve --gui`)
 - `GET /v1/models` — every hot-loaded model, listed by basename
-- `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy. Pass `"stream": true` for OpenAI SSE (`data: …` then `data: [DONE]`). Tokens are flushed as they generate; the gateway does not buffer the child.
+- `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy. Pass `"stream": true` for OpenAI SSE (`data: …` then `data: [DONE]`). Tokens are flushed as they generate; the gateway does not buffer the child. Embedding models return 400 here — use `/v1/embeddings`.
+- `POST /v1/embeddings` — OpenAI embeddings. Routed to a loaded `embed` engine (`mlx_vlm.server --embedding-model`). Body `model` is pinned to the spawn path. Does not touch chat children.
 - `GET /v1/progress` — Edge-specific JSON snapshot of prompt processing (prefill) and decode. Does not change the OpenAI surface. `?model=` filters by basename. Alias: `GET /edge/progress`.
 - `GET /v1/progress/stream` — the same object as SSE whenever it changes. Alias: `GET /edge/progress/stream`.
 - `GET`/`PUT /v1/prefs` — watch dirs and per-model flags (`~/.config/mlx-edge/studio.json`)
 - `POST /v1/completions` — routed by `model`
-- `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id)
+- `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id). `engine` is `lm` | `vlm` | `embed`. After the child is healthy, Edge sends a 1-token warmup (or a tiny embed) so Metal graphs are compiled before the first real request.
 - `POST /v1/unload` — unload `{model}`
 - `POST /v1/scan` — `{dirs: […]}` → local MLX checkpoints (`config.json` + weights)
 - `GET /health` — `{status, models, host, port, bind, url}`
@@ -205,6 +236,14 @@ Stream chat as usual:
 curl -N http://127.0.0.1:8080/v1/chat/completions \
   -H 'content-type: application/json' \
   -d '{"model":"MiniMax-M2.7-ConfigI-MLX","messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+Embeddings (RAG):
+
+```bash
+curl http://127.0.0.1:8080/v1/embeddings \
+  -H 'content-type: application/json' \
+  -d '{"model":"Qwen3-Embedding-0.6B-4bit","input":"what is the capital of France?"}'
 ```
 
 ## GUI source

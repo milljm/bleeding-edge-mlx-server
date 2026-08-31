@@ -14,25 +14,28 @@ export function EndpointPanel() {
   if (!model) return null;
 
   const base = gateway.url;
+  const id = publicName(model);
+  const embed = model.engine === "embed";
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <div>
         <h2 className="text-lg font-medium tracking-tight">OpenAI endpoint</h2>
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-          Point a chat client at <span className="font-mono font-medium text-foreground">{base}</span>. One
+          Point a client at <span className="font-mono font-medium text-foreground">{base}</span>. One
           gateway, many hot-loaded models — pass the basename as <span className="font-mono">model</span>
-          (not the full disk path). Set <span className="font-mono">stream: true</span> to receive tokens as
-          they generate. Prompt-processing progress is <span className="font-mono">GET /v1/progress</span>{" "}
-          (Edge-specific, not OpenAI). Bind with <span className="font-mono">edge-gui --host 0.0.0.0</span> for
-          remote clients.
+          (not the full disk path). Chat uses <span className="font-mono">stream: true</span>. Embeddings
+          use <span className="font-mono">POST /v1/embeddings</span> on a separate loaded process, so RAG
+          does not stall a chat model that is already up. Prompt-processing progress is{" "}
+          <span className="font-mono">GET /v1/progress</span> (Edge-specific). Bind with{" "}
+          <span className="font-mono">edge-gui --host 0.0.0.0</span> for remote clients.
         </p>
       </div>
       {served.length ? (
         <ul className="space-y-1 text-sm text-ok">
           {served.map((m) => (
             <li key={m.repo}>
-              loaded {m.repo} · {m.engine === "vlm" ? "mlx-vlm" : "mlx-lm"}
+              loaded {m.repo} · {m.engine === "vlm" ? "mlx-vlm" : m.engine === "embed" ? "mlx-embed" : "mlx-lm"}
             </li>
           ))}
         </ul>
@@ -43,10 +46,17 @@ export function EndpointPanel() {
       )}
       <CopyBlock label="start GUI + gateway" code={guiCommand(gateway)} />
       <CopyBlock label="hot-load this model" code={loadCommand(model, flags)} />
-      <CopyBlock
-        label="curl chat (stream)"
-        code={`curl -N ${base}/chat/completions \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${publicName(model)}","messages":[{"role":"user","content":"hello"}],"stream":true}'`}
-      />
+      {embed ? (
+        <CopyBlock
+          label="curl embeddings"
+          code={`curl ${base}/embeddings \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${id}","input":"what is the capital of France?"}'`}
+        />
+      ) : (
+        <CopyBlock
+          label="curl chat (stream)"
+          code={`curl -N ${base}/chat/completions \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${id}","messages":[{"role":"user","content":"hello"}],"stream":true}'`}
+        />
+      )}
       <CopyBlock label="list models" code={`curl ${base}/models`} />
       <CopyBlock
         label="processing progress"

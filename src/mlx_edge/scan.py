@@ -50,6 +50,27 @@ VLM_MARKERS = (
     "phi_3_vision",
     "deepseek_ocr",
 )
+EMBED_NAME_MARKERS = (
+    "embedding",
+    "embedder",
+    "embed_",
+    "_embed",
+    "bge_",
+    "_bge",
+    "e5_",
+    "_e5",
+    "gte_",
+    "_gte",
+    "minilm",
+    "nomic",
+    "jina_embed",
+    "arctic_embed",
+)
+EMBED_ARCH_MARKERS = (
+    "bertmodel",
+    "xlmrobertamodel",
+    "nomicbert",
+)
 
 
 def scan_dirs(dirs: list[str]) -> dict[str, Any]:
@@ -234,8 +255,6 @@ def _looks_like_sha(name: str) -> bool:
 
 
 def _infer_engine(cfg: dict[str, Any], repo: str, folder: str) -> str:
-    if any(cfg.get(key) for key in ("vision_config", "image_config", "audio_config")):
-        return "vlm"
     architectures = cfg.get("architectures") or []
     if not isinstance(architectures, list):
         architectures = [architectures]
@@ -247,6 +266,12 @@ def _infer_engine(cfg: dict[str, Any], repo: str, folder: str) -> str:
             folder,
         ]
     ).lower().replace("-", "_")
+    if any(marker in blob for marker in EMBED_NAME_MARKERS):
+        return "embed"
+    if any(cfg.get(key) for key in ("vision_config", "image_config", "audio_config")):
+        return "vlm"
+    if any(marker in blob for marker in EMBED_ARCH_MARKERS):
+        return "embed"
     if any(marker in blob for marker in VLM_MARKERS):
         return "vlm"
     return "lm"

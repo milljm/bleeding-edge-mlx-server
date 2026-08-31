@@ -1,4 +1,4 @@
-export type EngineKind = "lm" | "vlm";
+export type EngineKind = "lm" | "vlm" | "embed";
 export type FlagType = "number" | "text" | "bool" | "select";
 export type FlagGroup = "server" | "sampling" | "thinking";
 
@@ -174,7 +174,7 @@ export const FLAG_DEFS: FlagDef[] = [
     label: "Trust remote code",
     help: "Allow custom tokenizer / model code from Hub.",
     type: "bool",
-    engines: ["lm", "vlm"],
+    engines: ["lm", "vlm", "embed"],
     advanced: true,
     default: false,
   },
@@ -184,7 +184,7 @@ export const FLAG_DEFS: FlagDef[] = [
     label: "Log level",
     help: "Server logging verbosity.",
     type: "select",
-    engines: ["lm", "vlm"],
+    engines: ["lm", "vlm", "embed"],
     advanced: true,
     options: [
       { value: "DEBUG", label: "DEBUG" },
@@ -350,7 +350,7 @@ export const FLAG_DEFS: FlagDef[] = [
     key: "embeddingModel",
     flag: "--embedding-model",
     label: "Embedding model",
-    help: "Preload embeddings.",
+    help: "Preload embeddings on a VLM server (dedicated embed models use engine embed instead).",
     type: "text",
     engines: ["vlm"],
     advanced: true,
@@ -372,7 +372,7 @@ export const FLAG_DEFS: FlagDef[] = [
     label: "API key",
     help: "Optional bearer token for the server.",
     type: "text",
-    engines: ["vlm"],
+    engines: ["vlm", "embed"],
     advanced: true,
     default: "",
   },
@@ -432,11 +432,23 @@ export function flagsForModel(
 ): FlagValues {
   const base = defaultFlags();
   const context = model?.context;
-  if (typeof context === "number" && context > 0) {
+  if (model?.engine !== "embed" && typeof context === "number" && context > 0) {
     const cap = FLAG_DEFS.find((d) => d.key === "maxTokens");
     const max = typeof cap?.max === "number" ? cap.max : context;
     const min = typeof cap?.min === "number" ? cap.min : 16;
     base.maxTokens = Math.min(max, Math.max(min, context));
   }
   return mergeFlags({ ...base, ...(saved ?? {}) });
+}
+
+export function ownedBy(engine: EngineKind) {
+  if (engine === "vlm") return "mlx-vlm";
+  if (engine === "embed") return "mlx-embed";
+  return "mlx-lm";
+}
+
+export function engineFromOwnedBy(value?: string | null): EngineKind {
+  if (value === "mlx-vlm") return "vlm";
+  if (value === "mlx-embed") return "embed";
+  return "lm";
 }

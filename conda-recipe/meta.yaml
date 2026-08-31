@@ -1,5 +1,5 @@
 {% set name = "mlx-edge" %}
-{% set version = "0.6.0" %}
+{% set version = "0.7.0" %}
 
 package:
   name: {{ name|lower }}
@@ -42,10 +42,10 @@ about:
   home: https://github.com/milljm/bleeding-edge-mlx-server
   license: MIT
   license_file: LICENSE
-  summary: OpenAI /v1 gateway for mlx-lm / mlx-vlm with a local Edge GUI.
+  summary: OpenAI /v1 gateway for mlx-lm / mlx-vlm / embeddings with a local Edge GUI.
   description: |
-    mlx-edge hot-loads mlx-lm and mlx-vlm on one host/port. edge-gui serves
-    the studio that drives load/unload. Compiled mlx stays on a wheel.
+    mlx-edge hot-loads mlx-lm, mlx-vlm, and embedding models on one host/port.
+    edge-gui serves the studio that drives load/unload. Compiled mlx stays on a wheel.
   doc_url: https://github.com/milljm/bleeding-edge-mlx-server
   dev_url: https://github.com/milljm/bleeding-edge-mlx-server
 

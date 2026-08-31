@@ -45,6 +45,23 @@ class ScanTests(unittest.TestCase):
             self.assertTrue(repos["mlx-community/Qwen3-8B-4bit"]["path"].endswith("Qwen3-8B-4bit"))
             self.assertEqual(repos["mlx-community/Qwen3-8B-4bit"]["id"], "lm-mlx-community-qwen3-8b-4bit")
 
+    def test_embedding_models(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_model(root / "mlx-community" / "Qwen3-Embedding-0.6B-4bit")
+            path = root / "BAAI" / "bge-small-en-v1.5-mlx"
+            path.mkdir(parents=True)
+            (path / "config.json").write_text(
+                json.dumps({"model_type": "bert", "architectures": ["BertModel"]}),
+                encoding="utf-8",
+            )
+            (path / "model.safetensors").write_bytes(b"w")
+            _write_model(root / "mlx-community" / "Qwen3-8B-4bit")
+            models = {m["repo"]: m for m in list_models(str(root))}
+            self.assertEqual(models["mlx-community/Qwen3-Embedding-0.6B-4bit"]["engine"], "embed")
+            self.assertEqual(models["BAAI/bge-small-en-v1.5-mlx"]["engine"], "embed")
+            self.assertEqual(models["mlx-community/Qwen3-8B-4bit"]["engine"], "lm")
+
     def test_reads_context_window(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

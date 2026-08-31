@@ -179,8 +179,8 @@ export function Sidebar({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{model.name}</span>
                         <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                          <Badge variant={model.engine === "vlm" ? "warn" : "default"}>
-                            {model.engine === "vlm" ? "vlm" : "lm"}
+                          <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "embed" ? "accent" : "default"}>
+                            {model.engine}
                           </Badge>
                           <span className="text-xs text-muted-foreground">
                             {loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}

@@ -201,6 +201,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/chat/completions", "/v1/completions", "/chat/completions"}:
                 self._proxy()
                 return
+            if path in {"/v1/embeddings", "/embeddings"}:
+                self._embeddings()
+                return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
 
         def _load(self) -> None:
@@ -212,6 +215,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             engine = str(body.get("engine") or "lm")
             model = str(body.get("model") or "").strip()
             extra = body.get("args") or []
+            if engine not in {"lm", "vlm", "embed"}:
+                self._json({"error": {"message": "engine must be lm, vlm, or embed", "type": "invalid_request_error"}}, 400)
+                return
             if not model:
                 self._json({"error": {"message": "model is required", "type": "invalid_request_error"}}, 400)
                 return
@@ -298,22 +304,37 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
                 return
 
-        def _proxy(self) -> None:
+        def _resolve(self, requested: object, *, kind: str) -> LoadedModel | None:
             loaded = pool.list()
             if not loaded:
+                hint = "embed" if kind == "embed" else "lm"
                 self._json(
-                    {"error": {"message": "No models loaded. mlx-edge load --engine lm --model …", "type": "server_error"}},
+                    {
+                        "error": {
+                            "message": f"No models loaded. mlx-edge load --engine {hint} --model …",
+                            "type": "server_error",
+                        }
+                    },
                     503,
                 )
-                return
-            try:
-                body = _read_json(self)
-            except ValueError as exc:
-                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
-                return
-            requested = body.get("model")
-            item = pool.resolve(str(requested) if requested else None)
-            if requested and not item:
+                return None
+            needle = str(requested).strip() if requested else ""
+            if kind == "embed" and not needle:
+                item = next((m for m in loaded if m.engine == "embed"), None)
+                if not item:
+                    self._json(
+                        {
+                            "error": {
+                                "message": "No embedding model loaded. mlx-edge load --engine embed --model …",
+                                "type": "server_error",
+                            }
+                        },
+                        503,
+                    )
+                    return None
+            else:
+                item = pool.resolve(needle or None)
+            if needle and not item:
                 available = ", ".join(m.public_id for m in loaded)
                 self._json(
                     {
@@ -325,8 +346,49 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     },
                     404,
                 )
+                return None
+            if item is None:
+                self._json(
+                    {"error": {"message": "No models loaded. mlx-edge load --engine lm --model …", "type": "server_error"}},
+                    503,
+                )
+                return None
+            if kind == "embed" and item.engine != "embed":
+                self._json(
+                    {
+                        "error": {
+                            "message": (
+                                f"{item.public_id} does not serve embeddings. "
+                                "Serve a model tagged embed (Qwen3-Embedding, bge, …)."
+                            ),
+                            "type": "invalid_request_error",
+                        }
+                    },
+                    400,
+                )
+                return None
+            if kind == "chat" and item.engine == "embed":
+                self._json(
+                    {
+                        "error": {
+                            "message": f"{item.public_id} is an embedding model. POST /v1/embeddings instead.",
+                            "type": "invalid_request_error",
+                        }
+                    },
+                    400,
+                )
+                return None
+            return item
+
+        def _proxy(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
                 return
-            assert item is not None
+            item = self._resolve(body.get("model"), kind="chat")
+            if item is None:
+                return
             # mlx-lm/mlx-vlm treat a different `model` string as a new Hub
             # id and snapshot_download it. Pin to the path this child was
             # started with so a short repo name cannot trigger a re-download.
@@ -334,6 +396,18 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             stream = wants_stream(body)
             pool.progress.begin(item.public_id, item.engine, stream=stream)
             _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=stream, progress=pool.progress)
+
+        def _embeddings(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                return
+            item = self._resolve(body.get("model"), kind="embed")
+            if item is None:
+                return
+            body["model"] = item.model
+            _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=False, progress=None)
 
     return GatewayHandler
 

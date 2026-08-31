@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -26,16 +27,21 @@ def free_port() -> int:
 
 def strip_bind_args(extra: list[str]) -> list[str]:
     """Children always bind 127.0.0.1:ephemeral. Drop competing --host/--port."""
+    return strip_named_args(extra, {"--host", "--port"})
+
+
+def strip_named_args(extra: list[str], names: set[str]) -> list[str]:
     out: list[str] = []
     skip = False
+    prefixes = tuple(name + "=" for name in names)
     for arg in extra:
         if skip:
             skip = False
             continue
-        if arg in {"--host", "--port"}:
+        if arg in names:
             skip = True
             continue
-        if arg.startswith("--host=") or arg.startswith("--port="):
+        if arg.startswith(prefixes):
             continue
         out.append(arg)
     return out
@@ -81,12 +87,44 @@ def names_match(left: str, right: str) -> bool:
 
 def server_argv(engine_id: str) -> list[str]:
     """Prefer `python -m mlx_lm server` — `python -m mlx_lm.server` is deprecated."""
+    if engine_id == "lm":
+        return [sys.executable, "-u", "-m", "mlx_lm", "server"]
+    if engine_id in {"vlm", "embed"}:
+        return [sys.executable, "-u", "-m", "mlx_vlm.server"]
     engine = get_engine(engine_id)
     if not engine.server_module:
         raise RuntimeError(f"{engine.dist} has no server")
-    if engine.id == "lm":
-        return [sys.executable, "-u", "-m", "mlx_lm", "server"]
     return [sys.executable, "-u", "-m", engine.server_module]
+
+
+def spawn_argv(engine_id: str, model: str, port: int, extra: list[str]) -> list[str]:
+    extra = strip_bind_args(list(extra or []))
+    extra = strip_named_args(extra, {"--model", "--embedding-model"})
+    if engine_id == "embed":
+        return [
+            *server_argv("embed"),
+            "--embedding-model",
+            model,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            *extra,
+        ]
+    return [
+        *server_argv(engine_id),
+        "--model",
+        model,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        *extra,
+    ]
+
+
+def owned_by(engine: str) -> str:
+    return {"lm": "mlx-lm", "vlm": "mlx-vlm", "embed": "mlx-embed"}.get(engine, "mlx-lm")
 
 
 @dataclass
@@ -111,7 +149,7 @@ class LoadedModel:
             "id": self.public_id,
             "object": "model",
             "created": int(self.started_at),
-            "owned_by": "mlx-vlm" if self.engine == "vlm" else "mlx-lm",
+            "owned_by": owned_by(self.engine),
         }
 
 
@@ -122,17 +160,35 @@ def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> su
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env.setdefault("PYTHONIOENCODING", "utf-8")
-    cmd = [
-        *server_argv(engine_id),
-        "--model",
-        model,
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(port),
-        *strip_bind_args(extra),
-    ]
+    cmd = spawn_argv(engine_id, model, port, extra)
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+
+
+def warmup_engine(item: LoadedModel, timeout: float = 120.0) -> None:
+    """Compile Metal graphs so the first real request is not a cold start."""
+    if item.engine == "embed":
+        payload: dict[str, object] = {"model": item.model, "input": "ok"}
+        path = "/v1/embeddings"
+    else:
+        payload = {
+            "model": item.model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            "temperature": 0,
+            "stream": False,
+        }
+        path = "/v1/chat/completions"
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{item.port}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except (urllib.error.URLError, TimeoutError, OSError, urllib.error.HTTPError):
+        return
 
 
 class ModelPool:
@@ -192,6 +248,8 @@ class ModelPool:
             if code is not None:
                 raise RuntimeError(f"{label} exited with code {code}") from exc
             raise RuntimeError(f"{label} failed to start: {exc}") from exc
+        if proc is not None:
+            warmup_engine(item)
         self._models[item.id] = item
         return item
 

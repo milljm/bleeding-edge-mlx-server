@@ -43,6 +43,7 @@ class CliTests(unittest.TestCase):
             no_browser=True,
             lm=[],
             vlm=[],
+            embed=[],
             engine=None,
             model=[],
         )
@@ -62,9 +63,10 @@ class CliTests(unittest.TestCase):
 
     def test_serve_parses_preload_flags(self):
         parser = build_parser()
-        args = parser.parse_args(["serve", "--lm", "qwen", "--vlm", "qwen-vl", "--lm", "llama"])
+        args = parser.parse_args(["serve", "--lm", "qwen", "--vlm", "qwen-vl", "--lm", "llama", "--embed", "bge"])
         self.assertEqual(args.lm, ["qwen", "llama"])
         self.assertEqual(args.vlm, ["qwen-vl"])
+        self.assertEqual(args.embed, ["bge"])
 
     def test_legacy_engine_model(self):
         parser = build_parser()

@@ -13,15 +13,14 @@ export type ModelRec = {
   source: "scan" | "manual";
 };
 
-/** Pre-0.4 persisted default. Migrated to an empty watch list. */
+/** Common watch path (LM Studio). Kept as-is — never treated as a wipe sentinel. */
 export const LEGACY_DEFAULT_WATCH = "~/.lmstudio/models";
 
 export const DIR_PLACEHOLDER = "/path/to/models";
 
 export function migrateWatchDirs(dirs?: string[] | null): string[] {
   if (!dirs || dirs.length === 0) return [];
-  if (dirs.length === 1 && dirs[0] === LEGACY_DEFAULT_WATCH) return [];
-  return dirs.filter((d) => d.trim().length > 0);
+  return [...new Set(dirs.map((d) => d.trim()).filter((d) => d.length > 0))];
 }
 
 export function slugModelId(engine: EngineKind, repo: string, source: ModelRec["source"] = "scan") {

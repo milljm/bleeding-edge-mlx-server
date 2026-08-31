@@ -47,11 +47,13 @@ export function FlagPanel() {
             Settings for {model.name} only — they stick when you close Edge.
             {formatContext(model.context) ? ` Context window ${formatContext(model.context)}.` : ""}{" "}
             These map 1:1 onto {engineLabel(model.engine)} flags.
-            {live
-              ? dirty
-                ? " Flags changed on a running model — Reload to apply them."
-                : " Change a flag and Reload to apply it without unloading the others."
-              : " Serve hot-loads this model beside any that are already up."}
+            {model.engine === "embed"
+              ? " Embedding models answer POST /v1/embeddings — they do not chat."
+              : live
+                ? dirty
+                  ? " Flags changed on a running model — Reload to apply them."
+                  : " Change a flag and Reload to apply it without unloading the others."
+                : " Serve hot-loads this model beside any that are already up."}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -80,6 +82,12 @@ export function FlagPanel() {
           </Button>
         </div>
       </div>
+      {model.engine === "embed" ? (
+        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
+          This is an embedding model. Serve it, then POST <span className="font-mono text-foreground">/v1/embeddings</span>.
+          Keep a chat model loaded too — RAG does not unload it.
+        </p>
+      ) : null}
       {groups.map((group) => {
         const defs = visible.filter((d) => (d.group ?? "server") === group);
         if (defs.length === 0) return null;
