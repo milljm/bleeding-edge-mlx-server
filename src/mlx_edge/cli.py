@@ -323,7 +323,7 @@ def cmd_serve(args: argparse.Namespace, rest: list[str]) -> int:
             print(dim(f"  {item.engine:<4} {item.model}"))
     else:
         print(dim("  empty pool. Serve from the GUI, or mlx-edge load --engine lm --model …"))
-    print(dim("  GET /v1/models  POST /v1/chat/completions  POST /v1/load"))
+    print(dim("  GET /v1/models  POST /v1/chat/completions  GET /v1/progress  POST /v1/load"))
     if gui and not getattr(args, "no_browser", False):
         page = url[: -len("/v1")] + "/"
         threading.Timer(0.6, lambda: webbrowser.open(page)).start()

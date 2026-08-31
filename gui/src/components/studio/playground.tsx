@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { modelIsLive } from "@/lib/edge-api";
-import { loadTarget } from "@/lib/models";
+import { deltaContent, getProgress, modelIsLive, type ModelProgress } from "@/lib/edge-api";
+import { loadTarget, publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +17,28 @@ export function Playground() {
   const [busy, setBusy] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ModelProgress | null>(null);
+
+  useEffect(() => {
+    if (!busy || !model) {
+      setProgress(null);
+      return;
+    }
+    let stop = false;
+    async function tick() {
+      try {
+        const snap = await getProgress(publicName(model!));
+        if (!stop) setProgress(snap.models[0] ?? null);
+      } catch {
+        /* preview or network blip */
+      }
+      if (!stop) window.setTimeout(tick, 200);
+    }
+    void tick();
+    return () => {
+      stop = true;
+    };
+  }, [busy, model]);
 
   async function send() {
     const text = input.trim();
@@ -26,6 +48,8 @@ export function Playground() {
     const next = [...turns, { role: "user" as const, text }];
     setTurns(next);
     setBusy(true);
+    let assistant = "";
+    const paint = (value: string) => setTurns([...next, { role: "assistant", text: value }]);
     try {
       const res = await fetch("/v1/chat/completions", {
         method: "POST",
@@ -34,22 +58,52 @@ export function Playground() {
           model: loadTarget(model),
           messages: next.map((t) => ({ role: t.role, content: t.text })),
           max_tokens: 256,
-          stream: false,
+          stream: true,
         }),
       });
-      const body = (await res.json()) as {
-        error?: { message?: string };
-        choices?: { message?: { content?: string } }[];
-      };
+      const ctype = res.headers.get("content-type") || "";
       if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
         throw new Error(body.error?.message || `HTTP ${res.status}`);
       }
-      const reply = body.choices?.[0]?.message?.content ?? "(empty)";
-      setTurns([...next, { role: "assistant", text: reply }]);
+      if (ctype.includes("text/event-stream") && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let acc = "";
+        paint("");
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          acc += decoder.decode(value, { stream: true });
+          const frames = acc.split("\n\n");
+          acc = frames.pop() ?? "";
+          for (const frame of frames) {
+            for (const line of frame.split("\n")) {
+              if (!line.startsWith("data:")) continue;
+              const data = line.slice(5).trim();
+              if (!data || data === "[DONE]") continue;
+              try {
+                const piece = deltaContent(JSON.parse(data));
+                if (piece) {
+                  assistant += piece;
+                  paint(assistant);
+                }
+              } catch {
+                /* ignore malformed chunk */
+              }
+            }
+          }
+        }
+        if (!assistant) paint("(empty)");
+      } else {
+        const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+        paint(body.choices?.[0]?.message?.content ?? "(empty)");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -65,12 +119,15 @@ export function Playground() {
     );
   }
 
+  const prefill = progress?.phase === "prefill" ? progress.prompt : null;
+  const prefillPct = prefill?.ratio != null ? Math.round(prefill.ratio * 100) : null;
+
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         {turns.length === 0 ? (
           <p className="pt-6 text-sm text-muted-foreground">
-            POST /v1/chat/completions on the already-loaded engine. {served.length} loaded on this origin.
+            Streaming POST /v1/chat/completions on the already-loaded engine. {served.length} loaded on this origin.
           </p>
         ) : (
           turns.map((turn, i) => (
@@ -86,7 +143,20 @@ export function Playground() {
               <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
                 {turn.role}
               </p>
-              <p className="leading-relaxed whitespace-pre-wrap">{turn.text}</p>
+              {turn.role === "assistant" && !turn.text && prefill ? (
+                <PrefillMeter
+                  processed={prefill.processed_tokens}
+                  total={prefill.total_tokens}
+                  pct={prefillPct}
+                />
+              ) : (
+                <p className="leading-relaxed whitespace-pre-wrap">
+                  {turn.text}
+                  {busy && i === turns.length - 1 && turn.role === "assistant" ? (
+                    <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
+                  ) : null}
+                </p>
+              )}
             </article>
           ))
         )}
@@ -115,6 +185,30 @@ export function Playground() {
           <ArrowUp />
         </Button>
       </form>
+    </div>
+  );
+}
+
+function PrefillMeter({
+  processed,
+  total,
+  pct,
+}: {
+  processed: number;
+  total: number | null;
+  pct: number | null;
+}) {
+  const width = pct ?? 8;
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">
+        Processing prompt
+        {total ? ` ${processed.toLocaleString("en-US")} / ${total.toLocaleString("en-US")}` : ` ${processed.toLocaleString("en-US")} tokens`}
+        {pct != null ? ` · ${pct}%` : ""}
+      </p>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
+        <div className="h-full rounded-full bg-ok transition-[width] duration-150" style={{ width: `${width}%` }} />
+      </div>
     </div>
   );
 }

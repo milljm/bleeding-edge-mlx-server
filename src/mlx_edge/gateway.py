@@ -9,9 +9,10 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse, unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
 from mlx_edge.pool import LoadedModel, ModelPool
+from mlx_edge.progress import ProgressTracker
 
 CORS = {
     "Access-Control-Allow-Origin": "*",
@@ -82,6 +83,15 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return data
 
 
+def wants_stream(body: dict[str, Any]) -> bool:
+    value = body.get("stream")
+    if value is True or value == 1:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}:
+        return True
+    return False
+
+
 def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[BaseHTTPRequestHandler]:
     web = Path(static_dir).resolve() if static_dir else None
 
@@ -101,7 +111,10 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
         def _bytes(self, payload: bytes, content_type: str, status: int = 200) -> None:
             self.send_response(status)
@@ -115,7 +128,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if web is None:
                 return False
             rel = unquote(raw_path.split("?", 1)[0]).lstrip("/") or "index.html"
-            if rel.startswith("v1/") or rel == "v1":
+            if rel.startswith("v1/") or rel == "v1" or rel.startswith("edge/"):
                 return False
             target = (web / rel).resolve()
             try:
@@ -153,6 +166,12 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 from mlx_edge.prefs import load_prefs
 
                 self._json(load_prefs())
+                return
+            if path in {"/v1/progress", "/edge/progress"}:
+                self._progress()
+                return
+            if path in {"/v1/progress/stream", "/edge/progress/stream"}:
+                self._progress_stream()
                 return
             if self._static(raw_path):
                 return
@@ -248,6 +267,37 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
 
             self._json(save_prefs(body))
 
+        def _progress(self) -> None:
+            qs = parse_qs(urlparse(self.path).query)
+            needle = (qs.get("model") or [None])[0]
+            self._json(pool.progress.snapshot(needle))
+
+        def _progress_stream(self) -> None:
+            qs = parse_qs(urlparse(self.path).query)
+            needle = (qs.get("model") or [None])[0]
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            last = ""
+            try:
+                while True:
+                    snap = pool.progress.snapshot(needle)
+                    blob = json.dumps(snap)
+                    if blob != last:
+                        self.wfile.write(f"data: {blob}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                        last = blob
+                    elif snap.get("active"):
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                    pool.progress.wait(pool.progress.seq(), 1.0)
+            except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+                return
+
         def _proxy(self) -> None:
             loaded = pool.list()
             if not loaded:
@@ -281,26 +331,43 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             # id and snapshot_download it. Pin to the path this child was
             # started with so a short repo name cannot trigger a re-download.
             body["model"] = item.model
-            _proxy_to(self, item, json.dumps(body).encode("utf-8"))
+            stream = wants_stream(body)
+            pool.progress.begin(item.public_id, item.engine, stream=stream)
+            _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=stream, progress=pool.progress)
 
     return GatewayHandler
 
 
-def _proxy_to(handler: BaseHTTPRequestHandler, item: LoadedModel, body: bytes) -> None:
+def _proxy_to(
+    handler: BaseHTTPRequestHandler,
+    item: LoadedModel,
+    body: bytes,
+    stream: bool = False,
+    progress: ProgressTracker | None = None,
+) -> None:
     headers = {
         key: value
         for key, value in handler.headers.items()
-        if key.lower() not in {"host", "content-length"}
+        if key.lower() not in {"host", "content-length", "accept-encoding"}
     }
     headers["Content-Type"] = handler.headers.get("Content-Type") or "application/json"
+    headers["Accept-Encoding"] = "identity"
+    headers["Connection"] = "close"
     req = urllib.request.Request(
         f"http://127.0.0.1:{item.port}{handler.path}",
         data=body,
         method="POST",
         headers=headers,
     )
+    tracker = progress
+    model_id = item.public_id
     try:
         with urllib.request.urlopen(req, timeout=600) as resp:
+            content_type = resp.headers.get("Content-Type") or "application/json"
+            is_stream = stream or "text/event-stream" in content_type.lower()
+            if is_stream:
+                _pipe_sse(handler, resp, tracker, model_id)
+                return
             payload = resp.read()
             handler.send_response(resp.status)
             for key, value in CORS.items():
@@ -312,6 +379,8 @@ def _proxy_to(handler: BaseHTTPRequestHandler, item: LoadedModel, body: bytes) -
             handler.send_header("Content-Length", str(len(payload)))
             handler.end_headers()
             handler.wfile.write(payload)
+            if tracker:
+                tracker.complete(model_id)
     except urllib.error.HTTPError as exc:
         payload = exc.read()
         handler.send_response(exc.code)
@@ -321,6 +390,8 @@ def _proxy_to(handler: BaseHTTPRequestHandler, item: LoadedModel, body: bytes) -
         handler.send_header("Content-Length", str(len(payload)))
         handler.end_headers()
         handler.wfile.write(payload)
+        if tracker:
+            tracker.fail(model_id, f"engine HTTP {exc.code}")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         handler.send_response(502)
         for key, value in CORS.items():
@@ -330,6 +401,40 @@ def _proxy_to(handler: BaseHTTPRequestHandler, item: LoadedModel, body: bytes) -
         handler.send_header("Content-Length", str(len(msg)))
         handler.end_headers()
         handler.wfile.write(msg)
+        if tracker:
+            tracker.fail(model_id, str(exc))
+
+
+def _pipe_sse(
+    handler: BaseHTTPRequestHandler,
+    resp: Any,
+    tracker: ProgressTracker | None,
+    model_id: str,
+) -> None:
+    handler.send_response(200)
+    for key, value in CORS.items():
+        handler.send_header(key, value)
+    handler.send_header("Content-Type", "text/event-stream")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("Connection", "close")
+    handler.send_header("X-Accel-Buffering", "no")
+    handler.end_headers()
+    leftover = b""
+    read1 = getattr(resp, "read1", None)
+    try:
+        while True:
+            chunk = read1(512) if read1 else resp.read(512)
+            if not chunk:
+                break
+            handler.wfile.write(chunk)
+            handler.wfile.flush()
+            if tracker:
+                leftover = tracker.ingest_sse(model_id, leftover + chunk)
+        if tracker:
+            tracker.complete(model_id)
+    except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+        if tracker:
+            tracker.fail(model_id, "stream closed")
 
 
 def serve_forever(

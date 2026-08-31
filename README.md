@@ -136,7 +136,9 @@ Gateway (defaults `127.0.0.1:8080`):
 
 - `GET /` — Edge GUI (`edge-gui` / `mlx-edge serve --gui`)
 - `GET /v1/models` — every hot-loaded model, listed by basename
-- `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy.
+- `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy. Pass `"stream": true` for OpenAI SSE (`data: …` then `data: [DONE]`). Tokens are flushed as they generate; the gateway does not buffer the child.
+- `GET /v1/progress` — Edge-specific JSON snapshot of prompt processing (prefill) and decode. Does not change the OpenAI surface. `?model=` filters by basename. Alias: `GET /edge/progress`.
+- `GET /v1/progress/stream` — the same object as SSE whenever it changes. Alias: `GET /edge/progress/stream`.
 - `GET`/`PUT /v1/prefs` — watch dirs and per-model flags (`~/.config/mlx-edge/studio.json`)
 - `POST /v1/completions` — routed by `model`
 - `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id)
@@ -146,6 +148,64 @@ Gateway (defaults `127.0.0.1:8080`):
 
 Each loaded model is its own `mlx_lm.server` / `mlx_vlm.server` child. The
 gateway is the one OpenAI URL.
+
+### Processing progress
+
+Prefill (reading the prompt) is the slow part on long contexts. Poll it from
+another process without touching OpenAI chat:
+
+```bash
+curl http://127.0.0.1:8080/v1/progress
+curl http://127.0.0.1:8080/v1/progress?model=MiniMax-M2.7-ConfigI-MLX
+curl -N http://127.0.0.1:8080/v1/progress/stream
+```
+
+```json
+{
+  "object": "edge.progress",
+  "version": 1,
+  "generated_at": 1756670123.45,
+  "active": true,
+  "models": [
+    {
+      "id": "MiniMax-M2.7-ConfigI-MLX",
+      "engine": "lm",
+      "phase": "prefill",
+      "status": "processing",
+      "stream": true,
+      "prompt": {
+        "processed_tokens": 2048,
+        "total_tokens": 6540,
+        "ratio": 0.3131,
+        "cached_tokens": null,
+        "started_at": 1756670120.1,
+        "updated_at": 1756670122.4,
+        "tokens_per_second": 820.1
+      },
+      "generation": {
+        "tokens": 0,
+        "started_at": null,
+        "updated_at": null,
+        "tokens_per_second": null
+      },
+      "error": null
+    }
+  ]
+}
+```
+
+`phase` is `idle` | `prefill` | `decode` | `done` | `error`. New keys can land
+later under the same object (`version` bumps if the meaning of a field changes).
+Numbers come from mlx-lm keepalives (`: keepalive 2048/6540`) and from child
+logs (`Prompt processing progress: 2048/6540`, mlx-vlm `Prefill progress: …`).
+
+Stream chat as usual:
+
+```bash
+curl -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"MiniMax-M2.7-ConfigI-MLX","messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
 
 ## GUI source
 

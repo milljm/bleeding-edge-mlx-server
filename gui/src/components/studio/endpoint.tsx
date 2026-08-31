@@ -22,7 +22,9 @@ export function EndpointPanel() {
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">
           Point a chat client at <span className="font-mono font-medium text-foreground">{base}</span>. One
           gateway, many hot-loaded models — pass the basename as <span className="font-mono">model</span>
-          (not the full disk path). Bind with <span className="font-mono">edge-gui --host 0.0.0.0</span> for
+          (not the full disk path). Set <span className="font-mono">stream: true</span> to receive tokens as
+          they generate. Prompt-processing progress is <span className="font-mono">GET /v1/progress</span>{" "}
+          (Edge-specific, not OpenAI). Bind with <span className="font-mono">edge-gui --host 0.0.0.0</span> for
           remote clients.
         </p>
       </div>
@@ -42,10 +44,14 @@ export function EndpointPanel() {
       <CopyBlock label="start GUI + gateway" code={guiCommand(gateway)} />
       <CopyBlock label="hot-load this model" code={loadCommand(model, flags)} />
       <CopyBlock
-        label="curl chat"
-        code={`curl ${base}/chat/completions \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${publicName(model)}","messages":[{"role":"user","content":"hello"}]}'`}
+        label="curl chat (stream)"
+        code={`curl -N ${base}/chat/completions \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${publicName(model)}","messages":[{"role":"user","content":"hello"}],"stream":true}'`}
       />
       <CopyBlock label="list models" code={`curl ${base}/models`} />
+      <CopyBlock
+        label="processing progress"
+        code={`curl ${base.replace(/\/v1$/, "")}/v1/progress\ncurl -N ${base.replace(/\/v1$/, "")}/v1/progress/stream`}
+      />
     </div>
   );
 }

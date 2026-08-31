@@ -278,6 +278,121 @@ class GatewayTests(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
 
+    def test_progress_idle_then_prefill_from_keepalive(self):
+        from http.server import BaseHTTPRequestHandler
+        import time
+
+        from mlx_edge.pool import LoadedModel
+
+        started = threading.Event()
+
+        class SlowStream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b": keepalive 2048/6540\n\n")
+                self.wfile.flush()
+                started.set()
+                time.sleep(0.35)
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
+                self.wfile.flush()
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), SlowStream)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        path = "/models/MiniMax-M2.7-ConfigI-MLX"
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-ConfigI-MLX",
+                engine="lm",
+                model=path,
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-ConfigI-MLX",
+            )
+            self.pool._models[item.id] = item
+            self.pool.progress.ensure(item.public_id, "lm")
+            idle = self._json("GET", "/v1/progress")[1]
+            self.assertEqual(idle.get("object"), "edge.progress")
+            self.assertFalse(idle.get("active"))
+
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "MiniMax-M2.7-ConfigI-MLX",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            t0 = time.time()
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                self.assertIn("text/event-stream", resp.headers.get("Content-Type", ""))
+                first = resp.read1(64) if hasattr(resp, "read1") else resp.read(64)
+                elapsed = time.time() - t0
+                self.assertLess(elapsed, 0.3)
+                self.assertIn(b"keepalive", first)
+                started.wait(1)
+                snap = self._json("GET", "/v1/progress?model=minimax-m2.7-configi-mlx")[1]
+                row = snap["models"][0]
+                self.assertEqual(row["phase"], "prefill")
+                self.assertEqual(row["prompt"]["processed_tokens"], 2048)
+                self.assertEqual(row["prompt"]["total_tokens"], 6540)
+                rest = resp.read()
+            self.assertIn(b"[DONE]", first + rest)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_non_stream_chat_still_json(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        class RecHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                payload = b'{"id":"chatcmpl-x","choices":[{"message":{"content":"ok"}}]}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), RecHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(id="demo", engine="lm", model="demo", port=engine_port, started_at=0.0, public_id="demo")
+            self.pool._models[item.id] = item
+            status, body = self._json(
+                "POST",
+                "/v1/chat/completions",
+                {"model": "demo", "messages": [{"role": "user", "content": "hi"}]},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(body["choices"][0]["message"]["content"], "ok")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
 
 
 if __name__ == "__main__":

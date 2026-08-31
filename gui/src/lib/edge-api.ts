@@ -160,3 +160,66 @@ export async function postScan(dirs: string[]): Promise<{ models: ModelRec[]; er
   const body = (await parseJson(res)) as { models?: ModelRec[]; errors?: ScanError[] };
   return { models: body.models ?? [], errors: body.errors ?? [] };
 }
+
+export type ProgressPhase = "idle" | "prefill" | "decode" | "done" | "error";
+export type ProgressStatus = "ready" | "processing" | "complete" | "error";
+
+export type PromptProgress = {
+  processed_tokens: number;
+  total_tokens: number | null;
+  ratio: number | null;
+  cached_tokens: number | null;
+  started_at: number | null;
+  updated_at: number | null;
+  tokens_per_second: number | null;
+};
+
+export type GenerationProgress = {
+  tokens: number;
+  started_at: number | null;
+  updated_at: number | null;
+  tokens_per_second: number | null;
+};
+
+export type ModelProgress = {
+  id: string;
+  engine: EngineKind;
+  phase: ProgressPhase;
+  status: ProgressStatus;
+  stream: boolean | null;
+  prompt: PromptProgress;
+  generation: GenerationProgress;
+  error: string | null;
+};
+
+export type ProgressSnapshot = {
+  object: "edge.progress";
+  version: 1;
+  generated_at: number;
+  active: boolean;
+  models: ModelProgress[];
+};
+
+export async function getProgress(model?: string): Promise<ProgressSnapshot> {
+  const url = model ? `/v1/progress?model=${encodeURIComponent(model)}` : "/v1/progress";
+  const res = await fetch(url);
+  const body = (await parseJson(res)) as Partial<ProgressSnapshot>;
+  return {
+    object: "edge.progress",
+    version: 1,
+    generated_at: Number(body.generated_at || Date.now() / 1000),
+    active: Boolean(body.active),
+    models: Array.isArray(body.models) ? (body.models as ModelProgress[]) : [],
+  };
+}
+
+export function deltaContent(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const choices = (payload as { choices?: { delta?: { content?: unknown }; message?: { content?: unknown } }[] }).choices;
+  const choice = choices?.[0];
+  const delta = choice?.delta?.content;
+  if (typeof delta === "string") return delta;
+  const message = choice?.message?.content;
+  return typeof message === "string" ? message : "";
+}
+

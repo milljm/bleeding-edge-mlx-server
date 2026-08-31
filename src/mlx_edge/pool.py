@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -13,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 from mlx_edge.engines import get_engine
+from mlx_edge.progress import ProgressTracker
 
 
 def free_port() -> int:
@@ -82,8 +85,8 @@ def server_argv(engine_id: str) -> list[str]:
     if not engine.server_module:
         raise RuntimeError(f"{engine.dist} has no server")
     if engine.id == "lm":
-        return [sys.executable, "-m", "mlx_lm", "server"]
-    return [sys.executable, "-m", engine.server_module]
+        return [sys.executable, "-u", "-m", "mlx_lm", "server"]
+    return [sys.executable, "-u", "-m", engine.server_module]
 
 
 @dataclass
@@ -116,6 +119,9 @@ SpawnFn = Callable[[str, str, int, list[str]], subprocess.Popen[bytes] | None]
 
 
 def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> subprocess.Popen[bytes]:
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     cmd = [
         *server_argv(engine_id),
         "--model",
@@ -126,14 +132,20 @@ def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> su
         str(port),
         *strip_bind_args(extra),
     ]
-    return subprocess.Popen(cmd)
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
 
 
 class ModelPool:
-    def __init__(self, spawn: SpawnFn | None = None, wait: Callable[..., None] | None = None) -> None:
+    def __init__(
+        self,
+        spawn: SpawnFn | None = None,
+        wait: Callable[..., None] | None = None,
+        progress: ProgressTracker | None = None,
+    ) -> None:
         self._models: dict[str, LoadedModel] = {}
         self._spawn = spawn or default_spawn
         self._wait = wait or wait_healthy
+        self.progress = progress or ProgressTracker()
 
     def list(self) -> list[LoadedModel]:
         return sorted(self._models.values(), key=lambda m: m.started_at)
@@ -168,17 +180,49 @@ class ModelPool:
             args=extra,
             public_id=public_id,
         )
+        self.progress.ensure(item.public_id, engine)
+        self._pump_logs(item)
         try:
             self._call_wait(port, proc)
         except Exception as exc:
             code = proc.returncode if proc is not None else None
             self._kill(item)
+            self.progress.drop(item.public_id)
             label = item.public_id
             if code is not None:
                 raise RuntimeError(f"{label} exited with code {code}") from exc
             raise RuntimeError(f"{label} failed to start: {exc}") from exc
         self._models[item.id] = item
         return item
+
+    def _pump_logs(self, item: LoadedModel) -> None:
+        proc = item.proc
+        stdout = getattr(proc, "stdout", None) if proc is not None else None
+        if proc is None or stdout is None:
+            return
+        public_id = item.public_id
+        engine = item.engine
+        progress = self.progress
+
+        def run() -> None:
+            try:
+                while True:
+                    line = stdout.readline()
+                    if not line:
+                        break
+                    text = line.decode("utf-8", "replace") if isinstance(line, (bytes, bytearray)) else str(line)
+                    try:
+                        sys.stderr.write(text)
+                        if not text.endswith("\n"):
+                            sys.stderr.write("\n")
+                        sys.stderr.flush()
+                    except Exception:
+                        pass
+                    progress.ingest_log(public_id, engine, text)
+            except Exception:
+                pass
+
+        threading.Thread(target=run, name=f"mlx-edge-log-{public_id}", daemon=True).start()
 
     def _call_wait(self, port: int, proc: subprocess.Popen[bytes] | None) -> None:
         try:
@@ -191,6 +235,7 @@ class ModelPool:
         if not item:
             return None
         self._models.pop(item.id, None)
+        self.progress.drop(item.public_id)
         self._kill(item)
         return item
 
