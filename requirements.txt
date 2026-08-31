@@ -1,0 +1,17 @@
+# Apple Silicon MLX stack for the `edge` conda env.
+#
+#   conda create -n edge python=3.13 uv pip git
+#   conda activate edge
+#   git clone https://github.com/milljm/bleeding-edge-mlx-server.git
+#   cd bleeding-edge-mlx-server
+#   uv pip install -r requirements.txt
+#   mlx-edge serve
+#
+# `mlx` is the compiled Metal wheel from PyPI (3.13 macOS arm64 wheels exist).
+# mlx-lm / mlx-vlm install from git HEAD so new architectures land without
+# waiting on a release. `-e .` is this repo's mlx-edge CLI.
+
+mlx>=0.29.0
+mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git
+mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm.git
+-e .

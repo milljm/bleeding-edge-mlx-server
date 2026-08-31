@@ -19,8 +19,9 @@ from typing import Any
 from mlx_edge import __version__
 from mlx_edge.engines import ENGINES, PYTHON_ENGINES, Engine, get_engine, resolve_targets
 
-USER_AGENT = "mlx-edge/0.1.0"
+USER_AGENT = "mlx-edge/0.2.0"
 PIN_PATH = Path.home() / ".config" / "mlx-edge" / "pins.json"
+GATEWAY_PATH = Path.home() / ".config" / "mlx-edge" / "gateway.json"
 
 
 def _tty() -> bool:
@@ -272,27 +273,144 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace, rest: list[str]) -> int:
-    engine = get_engine(args.engine)
-    if not engine.server_module:
-        print(red(f"{engine.dist} has no server"), file=sys.stderr)
+    from mlx_edge.gateway import serve_forever
+    from mlx_edge.pool import ModelPool
+
+    host = args.host or "127.0.0.1"
+    port = int(args.port or 8080)
+    preloads: list[tuple[str, str]] = []
+    for model in args.lm or []:
+        preloads.append(("lm", model))
+    for model in args.vlm or []:
+        preloads.append(("vlm", model))
+    if args.engine and args.model:
+        for model in args.model:
+            preloads.append((args.engine, model))
+    elif args.model and not args.engine:
+        print(red("--model requires --engine lm|vlm (or pass --lm / --vlm)"), file=sys.stderr)
         return 2
+
+    pool = ModelPool()
+    for engine_id, model in preloads:
+        print(bold(f"load {engine_id} {model}"))
+        try:
+            pool.load(engine_id, model, rest)
+        except Exception as exc:  # noqa: BLE001
+            print(red(str(exc)), file=sys.stderr)
+            pool.unload_all()
+            return 1
+
+    GATEWAY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    GATEWAY_PATH.write_text(json.dumps({"host": host, "port": port}) + "\n")
+    print(bold(f"mlx-edge gateway {host}:{port}"))
+    if preloads:
+        for item in pool.list():
+            print(dim(f"  {item.engine:<4} {item.model}"))
+    else:
+        print(dim("  empty pool. mlx-edge load --engine lm --model …"))
+    print(dim("  GET /v1/models  POST /v1/chat/completions  POST /v1/load"))
     try:
-        import_module(engine.server_module.rsplit(".", 1)[0])
-    except ImportError as exc:
-        print(red(f"cannot import {engine.module}: {exc}"), file=sys.stderr)
-        print(dim("install the env and run mlx-edge update"), file=sys.stderr)
+        serve_forever(pool, host, port)
+    except KeyboardInterrupt:
+        print()
+        print(dim("stopping"))
+        pool.unload_all()
+    finally:
+        if GATEWAY_PATH.is_file():
+            GATEWAY_PATH.unlink(missing_ok=True)
+    return 0
+
+
+def _gateway_url(args: argparse.Namespace) -> str:
+    host = args.host
+    port = args.port
+    if host is None or port is None:
+        if GATEWAY_PATH.is_file():
+            try:
+                data = json.loads(GATEWAY_PATH.read_text())
+            except json.JSONDecodeError:
+                data = {}
+            host = host or data.get("host") or "127.0.0.1"
+            port = port or data.get("port") or 8080
+        else:
+            host = host or "127.0.0.1"
+            port = port or 8080
+    return f"http://{host}:{int(port)}"
+
+
+def _post_gateway(url: str, path: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    req = urllib.request.Request(
+        url + path,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=600) as resp:
+            body = json.loads(resp.read().decode("utf-8") or "{}")
+            return resp.status, body if isinstance(body, dict) else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8")
+        try:
+            body = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            body = {"error": {"message": raw or str(exc)}}
+        return exc.code, body if isinstance(body, dict) else {}
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise SystemExit(red(f"gateway not reachable at {url}. start mlx-edge serve first ({exc})")) from exc
+
+
+def cmd_load(args: argparse.Namespace, rest: list[str]) -> int:
+    url = _gateway_url(args)
+    status, body = _post_gateway(
+        url,
+        "/v1/load",
+        {"engine": args.engine, "model": args.model, "args": rest},
+    )
+    if status >= 400:
+        err = (body.get("error") or {}).get("message") or json.dumps(body)
+        print(red(str(err)), file=sys.stderr)
         return 1
-    cmd = [sys.executable, "-m", engine.server_module]
-    if args.model:
-        cmd.extend(["--model", args.model])
-    if args.host:
-        cmd.extend(["--host", args.host])
-    if args.port:
-        cmd.extend(["--port", str(args.port)])
-    cmd.extend(rest)
-    print(dim("$ " + " ".join(cmd)))
-    os.execvp(cmd[0], cmd)
-    return 1
+    print(green("loaded") + " " + str(args.model))
+    models = body.get("models") or []
+    if models:
+        print(dim("pool: " + ", ".join(str(m) for m in models)))
+    return 0
+
+
+def cmd_unload(args: argparse.Namespace) -> int:
+    url = _gateway_url(args)
+    status, body = _post_gateway(url, "/v1/unload", {"model": args.model})
+    if status >= 400:
+        err = (body.get("error") or {}).get("message") or json.dumps(body)
+        print(red(str(err)), file=sys.stderr)
+        return 1
+    print(green("unloaded") + " " + str(args.model))
+    models = body.get("models") or []
+    print(dim("pool: " + (", ".join(str(m) for m in models) if models else "(empty)")))
+    return 0
+
+
+def cmd_models(args: argparse.Namespace) -> int:
+    url = _gateway_url(args)
+    req = urllib.request.Request(url + "/v1/models", headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            payload = json.loads(resp.read().decode("utf-8") or "{}")
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        print(red(f"gateway not reachable at {url} ({exc})"), file=sys.stderr)
+        return 1
+    if args.json:
+        json.dump(payload, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+    data = payload.get("data") or []
+    if not data:
+        print(dim("no models loaded"))
+        return 0
+    for row in data:
+        print(f"{row.get('owned_by', 'mlx'):<10} {row.get('id')}")
+    return 0
 
 
 def cmd_which(_args: argparse.Namespace) -> int:
@@ -357,7 +475,7 @@ def cmd_engines(_args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mlx-edge",
-        description="Overlay git HEAD of mlx-lm / mlx-vlm onto a conda-forge MLX environment.",
+        description="Hot-load mlx-lm / mlx-vlm onto one OpenAI /v1 gateway.",
     )
     parser.add_argument("--version", action="version", version=f"mlx-edge {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -387,12 +505,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_rollback.add_argument("engine", nargs="?", default="all")
     p_rollback.set_defaults(func=cmd_rollback)
 
-    p_serve = sub.add_parser("serve", help="exec mlx_lm.server or mlx_vlm.server")
-    p_serve.add_argument("--engine", required=True, choices=("lm", "vlm"))
-    p_serve.add_argument("--model")
-    p_serve.add_argument("--host")
-    p_serve.add_argument("--port", type=int)
+    p_serve = sub.add_parser("serve", help="OpenAI /v1 gateway; hot-load models beside each other")
+    p_serve.add_argument("--engine", choices=("lm", "vlm"), help="used with --model (repeatable)")
+    p_serve.add_argument("--model", action="append", default=[], help="preload with --engine (repeatable)")
+    p_serve.add_argument("--lm", action="append", default=[], metavar="MODEL", help="preload an mlx-lm model (repeatable)")
+    p_serve.add_argument("--vlm", action="append", default=[], metavar="MODEL", help="preload an mlx-vlm model (repeatable)")
+    p_serve.add_argument("--host", default="127.0.0.1")
+    p_serve.add_argument("--port", type=int, default=8080)
     p_serve.set_defaults(func=None, _serve=True)
+
+    p_load = sub.add_parser("load", help="hot-load a model onto a running gateway")
+    p_load.add_argument("--engine", required=True, choices=("lm", "vlm"))
+    p_load.add_argument("--model", required=True)
+    p_load.add_argument("--host")
+    p_load.add_argument("--port", type=int)
+    p_load.set_defaults(func=None, _load=True)
+
+    p_unload = sub.add_parser("unload", help="unload one model; others stay up")
+    p_unload.add_argument("--model", required=True)
+    p_unload.add_argument("--host")
+    p_unload.add_argument("--port", type=int)
+    p_unload.set_defaults(func=cmd_unload)
+
+    p_models = sub.add_parser("models", help="list models on the running gateway")
+    p_models.add_argument("--json", action="store_true")
+    p_models.add_argument("--host")
+    p_models.add_argument("--port", type=int)
+    p_models.set_defaults(func=cmd_models)
 
     p_which = sub.add_parser("which", help="print install paths and sources")
     p_which.set_defaults(func=cmd_which)
@@ -409,10 +548,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    # serve forwards unknown flags to the engine
     if argv and argv[0] == "serve":
         args, rest = parser.parse_known_args(argv)
         return cmd_serve(args, rest)
+    if argv and argv[0] == "load":
+        args, rest = parser.parse_known_args(argv)
+        return cmd_load(args, rest)
     args = parser.parse_args(argv)
     return int(args.func(args) or 0)
 

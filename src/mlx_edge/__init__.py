@@ -1,3 +1,3 @@
-"""Bleeding-edge MLX engine manager for conda-forge environments."""
+"""Bleeding-edge MLX engine manager and multi-model OpenAI gateway."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

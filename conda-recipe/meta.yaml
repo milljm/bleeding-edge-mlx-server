@@ -1,5 +1,5 @@
 {% set name = "mlx-edge" %}
-{% set version = "0.1.0" %}
+{% set version = "0.2.0" %}
 
 package:
   name: {{ name|lower }}
@@ -24,9 +24,6 @@ requirements:
     - python >=3.10
     - pip
     - git
-    - mlx
-    - mlx-lm
-    - mlx-vlm
 
 test:
   imports:
@@ -40,11 +37,11 @@ about:
   home: https://github.com/milljm/bleeding-edge-mlx-server
   license: MIT
   license_file: LICENSE
-  summary: Conda-forge MLX runtime with git overlays for mlx-lm and mlx-vlm.
+  summary: Hot-load mlx-lm and mlx-vlm onto one OpenAI /v1 gateway.
   description: |
-    mlx-edge keeps compiled mlx on conda-forge and overlays git HEAD of
-    mlx-lm / mlx-vlm with one command so new model architectures can run
-    before the next feedstock rebuild.
+    mlx-edge is a local OpenAI-compatible gateway. It keeps compiled mlx on a
+    wheel or conda-forge, overlays git HEAD of mlx-lm / mlx-vlm, and hot-loads
+    several models side by side on one host/port.
   doc_url: https://github.com/milljm/bleeding-edge-mlx-server
   dev_url: https://github.com/milljm/bleeding-edge-mlx-server
 

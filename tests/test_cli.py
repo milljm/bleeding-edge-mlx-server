@@ -12,9 +12,32 @@ from mlx_edge.cli import build_parser, cmd_engines, cmd_pin, cmd_update, main
 class CliTests(unittest.TestCase):
     def test_help(self):
         parser = build_parser()
-        self.assertIn("status", parser.format_help())
-        self.assertIn("update", parser.format_help())
-        self.assertIn("serve", parser.format_help())
+        help_text = parser.format_help()
+        self.assertIn("status", help_text)
+        self.assertIn("update", help_text)
+        self.assertIn("serve", help_text)
+        self.assertIn("load", help_text)
+        self.assertIn("unload", help_text)
+
+    def test_serve_parses_without_engine(self):
+        parser = build_parser()
+        args = parser.parse_args(["serve", "--host", "0.0.0.0", "--port", "9000"])
+        self.assertEqual(args.host, "0.0.0.0")
+        self.assertEqual(args.port, 9000)
+        self.assertEqual(args.lm, [])
+        self.assertEqual(args.vlm, [])
+
+    def test_serve_parses_preload_flags(self):
+        parser = build_parser()
+        args = parser.parse_args(["serve", "--lm", "qwen", "--vlm", "qwen-vl", "--lm", "llama"])
+        self.assertEqual(args.lm, ["qwen", "llama"])
+        self.assertEqual(args.vlm, ["qwen-vl"])
+
+    def test_legacy_engine_model(self):
+        parser = build_parser()
+        args = parser.parse_args(["serve", "--engine", "lm", "--model", "qwen"])
+        self.assertEqual(args.engine, "lm")
+        self.assertEqual(args.model, ["qwen"])
 
     def test_engines_lists_catalog(self):
         buf = io.StringIO()

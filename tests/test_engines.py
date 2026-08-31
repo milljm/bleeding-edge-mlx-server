@@ -25,3 +25,7 @@ class EngineCatalogTests(unittest.TestCase):
     def test_resolve_all(self):
         targets = resolve_targets("all")
         self.assertEqual([t.id for t in targets], ["lm", "vlm"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,13 +1,8 @@
-name: mlx-edge
+name: edge
 channels:
   - conda-forge
 dependencies:
-  - python >=3.11,<3.14
+  - python=3.13
+  - uv
   - pip
   - git
-  - mlx
-  - mlx-lm
-  - mlx-vlm
-  - huggingface_hub
-  - pip:
-      - git+https://github.com/milljm/bleeding-edge-mlx-server.git
