@@ -167,12 +167,12 @@ Gateway (defaults `127.0.0.1:8080`):
 
 - `GET /` — Edge GUI (`edge-gui` / `mlx-edge serve --gui`)
 - `GET /v1/models` — every hot-loaded model, listed by basename
-- `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy. Pass `"stream": true` for OpenAI SSE (`data: …` then `data: [DONE]`). Tokens are flushed as they generate; the gateway does not buffer the child. Harmony / MiniMax `<|channel|>` wrappers are stripped from `content` (`reasoning_content` holds analysis). Embedding models return 400 here — use `/v1/embeddings`.
+- `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway pins the request to the already-loaded engine so mlx-lm does not Hub-download a second copy. Pass `"stream": true` for OpenAI SSE (`data: …` then `data: [DONE]`). Tokens are flushed as they generate; the gateway does not buffer the child. Harmony `<|channel|>` wrappers and MiniMax `<think>` / `<mm:think>` blocks are stripped from `content` (`reasoning_content` holds analysis). If MiniMax never emits a closer, the buffered text is promoted back to `content` so the reply is not empty. Embedding models return 400 here — use `/v1/embeddings`.
 - `POST /v1/embeddings` — OpenAI embeddings. Routed to a loaded `embed` engine (`mlx_vlm.server --embedding-model`). Body `model` is pinned to the spawn path. Does not touch chat children.
 - `GET /v1/progress` — Edge-specific JSON snapshot of prompt processing (prefill) and decode. Does not change the OpenAI surface. Top-level `progress` and `models[].progress` are always floats in `[0.0, 1.0]` (idle `0.0`, prefill = prompt ratio, decode/done `1.0`). `?model=` filters by basename. Alias: `GET /edge/progress`.
 - `GET /v1/progress/stream` — the same object as SSE whenever it changes. Alias: `GET /edge/progress/stream`.
 - `GET /v1/logs` / `GET /v1/logs/stream` — engine stdout ring buffer (CLI-like). `POST /v1/logs/clear` empties it.
-- `GET`/`POST /v1/template` — inspect or pull a Jinja chat template (local checkpoint → Hugging Face → Harmony preset for MiniMax / gpt-oss).
+- `GET`/`POST /v1/template` — inspect or pull a Jinja chat template (local checkpoint → Hugging Face → Harmony preset for gpt-oss / ConfigI).
 - `GET`/`PUT /v1/prefs` — watch dirs and per-model flags (`~/.config/mlx-edge/studio.json`)
 - `POST /v1/completions` — routed by `model`
 - `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id). `engine` is `lm` | `vlm` | `embed`. After the child is healthy, Edge sends a 1-token warmup (or a tiny embed) so Metal graphs are compiled before the first real request.
@@ -247,20 +247,29 @@ es.onmessage = (ev) => {
 };
 ```
 
-### Chat templates and Harmony tokens
+### Chat templates and thinking tags
 
-MiniMax / gpt-oss checkpoints (including thetom-ai MiniMax-M2.7-ConfigI-MLX)
-often ship **without** `chat_template` in `tokenizer_config.json`. mlx-lm then
-does not wrap messages, and the model prints `<|channel|>analysis<|message|>…`
-as visible text.
+MiniMax-M2.7 and MiniMax-M3 Hugging Face templates wrap thinking in
+`<think>…</think>` / `<mm:think>…</mm:think>` and put the opener in the
+**prompt**, so the first generated tokens are thinking. ConfigI and gpt-oss
+use Harmony `<|channel|>` tokens instead.
 
-On Serve, if the folder has no template, Edge pulls one from Hugging Face or
-falls back to a compact Harmony template (`--chat-template`). Settings → Chat
-template lets you paste Jinja or **Pull from Hugging Face**, then Reload.
+On Serve, if the folder has no template, Edge pulls one from Hugging Face.
+Harmony is only injected as a fallback for gpt-oss / ConfigI names — not for
+generic MiniMax-M2.7 / M3 (those would start in the wrong dialect and yield
+empty `content`). Settings → Chat template lets you paste Jinja or **Pull from
+Hugging Face**, then Reload.
 
-The gateway still strips those tokens from OpenAI `content` and puts the
-analysis in `reasoning_content`, even when a template is applied (LM Studio
-hides thinking the same way). Plain Qwen / Llama output is untouched.
+The gateway splits thinking into `reasoning_content` and keeps OpenAI
+`content` as the visible answer. If a MiniMax generation never emits a closer,
+the buffered thinking is promoted back to `content` so clients do not see an
+empty reply (and `[DONE]` is held until that flush). Plain Qwen / Llama output
+is untouched.
+
+### Studio
+
+The Models sidebar sorts loaded (and currently loading) cards above the rest
+and tints them orange in both light and dark themes.
 
 ### Logging
 

@@ -158,6 +158,7 @@ function ChatPlayground({ live }: { live: boolean }) {
     setTurns(next);
     setBusy(true);
     let assistant = "";
+    let reasoning = "";
     const paint = (value: string) => setTurns([...next, { role: "assistant", text: value }]);
     try {
       const res = await fetch("/v1/chat/completions", {
@@ -195,6 +196,7 @@ function ChatPlayground({ live }: { live: boolean }) {
                 const payload = JSON.parse(data);
                 const piece = deltaContent(payload);
                 const think = deltaReasoning(payload);
+                if (think) reasoning += think;
                 if (piece) {
                   assistant += piece;
                   paint(assistant);
@@ -207,10 +209,13 @@ function ChatPlayground({ live }: { live: boolean }) {
             }
           }
         }
-        if (!assistant) paint("(empty)");
+        if (!assistant) paint(reasoning.trim() || "(empty)");
       } else {
-        const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-        paint(body.choices?.[0]?.message?.content ?? "(empty)");
+        const body = (await res.json()) as {
+          choices?: { message?: { content?: string; reasoning_content?: string } }[];
+        };
+        const msg = body.choices?.[0]?.message;
+        paint((msg?.content || msg?.reasoning_content || "").trim() || "(empty)");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
