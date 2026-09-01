@@ -23,6 +23,12 @@
   --edge-busy: #f0a040;
   --edge-hot: #e0893c;
   --edge-live: #e0893c;
+  --edge-tok: #ff9100;
+  --edge-tok-bg: rgba(4, 49, 0, 0.82);
+  --edge-tok-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.5),
+    0 1px 5px rgba(124, 232, 122, 0.35),
+    0 0 0 1px rgba(217, 224, 142, 0.22);
   --edge-shadow-border: 0 0 0 1px color-mix(in oklab, #eceee9 8%, transparent);
   --edge-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
 }
@@ -48,6 +54,11 @@ html[data-theme="light"] {
   --edge-busy: #c45a00;
   --edge-hot: #c05612;
   --edge-live: #2f6b3a;
+  --edge-tok: #111111;
+  --edge-tok-bg: #e0893c;
+  --edge-tok-shadow:
+    0 2px 6px rgba(80, 40, 0, 0.38),
+    0 0 0 1px rgba(80, 40, 0, 0.2);
   --edge-shadow-border: 0 0 0 1px color-mix(in oklab, #3a3630 10%, transparent);
   --edge-paper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.055'/%3E%3C/svg%3E");
 }
@@ -191,6 +202,32 @@ html[data-theme="light"] {
     transform: scaleX(var(--load-pct, 0));
     transform-origin: left center;
     will-change: transform;
+  }
+
+  .tok-bubble {
+    pointer-events: none;
+    position: absolute;
+    top: -0.35rem;
+    right: -0.2rem;
+    z-index: 3;
+    border-radius: 0.4rem;
+    padding: 1px 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    color: var(--edge-tok);
+    background: var(--edge-tok-bg);
+    box-shadow: var(--edge-tok-shadow);
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 0.5s var(--ease-smooth-out), transform 0.5s var(--ease-smooth-out);
+  }
+
+  .tok-bubble.is-leaving {
+    opacity: 0;
+    transform: translateY(-3px);
   }
 }
 

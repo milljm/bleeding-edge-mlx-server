@@ -236,17 +236,33 @@ export function subscribeProgress(onSnap: (snap: ProgressSnapshot) => void): () 
   return () => es.close();
 }
 
+function progressRow(
+  snap: ProgressSnapshot | null | undefined,
+  model?: { id: string; repo: string; path?: string; name?: string } | null,
+): ModelProgress | undefined {
+  if (!snap || !model) return undefined;
+  const needles = [model.repo, model.id, model.path, model.name].filter((n): n is string => Boolean(n));
+  return snap.models.find((row) => needles.some((n) => sameModel(row.id, n)));
+}
+
 export function modelIsBusy(
   snap: ProgressSnapshot | null | undefined,
   model?: { id: string; repo: string; path?: string; name?: string } | null,
 ): boolean {
-  if (!snap?.active || !model) return false;
-  const needles = [model.repo, model.id, model.path, model.name].filter((n): n is string => Boolean(n));
-  return snap.models.some((row) => {
-    const processing = row.status === "processing" && (row.phase === "prefill" || row.phase === "decode");
-    if (!processing) return false;
-    return needles.some((n) => sameModel(row.id, n));
-  });
+  const row = progressRow(snap, model);
+  if (!row) return false;
+  return row.status === "processing" && (row.phase === "prefill" || row.phase === "decode");
+}
+
+export function modelGeneration(
+  snap: ProgressSnapshot | null | undefined,
+  model?: { id: string; repo: string; path?: string; name?: string } | null,
+): { tokens: number; generating: boolean } {
+  const row = progressRow(snap, model);
+  if (!row) return { tokens: 0, generating: false };
+  const generating = row.status === "processing" && (row.phase === "prefill" || row.phase === "decode");
+  const tokens = Number(row.generation?.tokens || 0);
+  return { tokens: Number.isFinite(tokens) ? tokens : 0, generating };
 }
 
 export function modelLoadProgress(
