@@ -3,6 +3,7 @@ import unittest
 
 from mlx_edge.channels import (
     HarmonyFilter,
+    assume_think_start,
     filter_text,
     harmony_model_name,
     rewrite_completion_payload,
@@ -97,6 +98,19 @@ class ChannelTests(unittest.TestCase):
         self.assertTrue(harmony_model_name("MiniMax-M2-8bit"))
         self.assertTrue(harmony_model_name("openai/gpt-oss-20b"))
         self.assertFalse(harmony_model_name("Qwen3-8B-4bit"))
+        self.assertFalse(assume_think_start("MiniMax-M2.7-ConfigI-MLX"))
+        self.assertFalse(assume_think_start("/Users/milljm/.lmstudio/models/thetom-ai/MiniMax-M2.7-ConfigI-MLX"))
+        self.assertFalse(assume_think_start("openai/gpt-oss-20b"))
+        self.assertTrue(assume_think_start("MiniMax-M2.7-8bit"))
+        self.assertTrue(assume_think_start("MiniMax-M2-8bit"))
+
+    def test_configi_plain_tokens_are_content(self):
+        filt = HarmonyFilter(assume_analysis=assume_think_start("MiniMax-M2.7-ConfigI-MLX"))
+        c1, r1 = filt.push("Here's a **multi-panel")
+        c2, r2 = filt.push(" scatter plot**")
+        c3, r3 = filt.flush()
+        self.assertEqual(c1 + c2 + c3, "Here's a **multi-panel scatter plot**")
+        self.assertEqual(r1 + r2 + r3, "")
 
     def test_minimax_m27_think_tags(self):
         raw = "Need the current price.\n</think>\n\nApple is trading at $316.85."
