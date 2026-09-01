@@ -171,7 +171,7 @@ export function Sidebar({
                       className={cn(
                         "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ring-inset transition-colors duration-150",
                         inUse && "bg-hot/20 text-foreground hover:bg-hot/30",
-                        error && !inUse && "bg-destructive/15 hover:bg-destructive/20",
+                        error && !inUse && "bg-destructive/40 text-foreground hover:bg-destructive/50 ring-1 ring-destructive/60",
                         !inUse && !error && "hover:bg-accent",
                         active && "ring-2 ring-primary",
                       )}

@@ -259,7 +259,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             try:
                 item = pool.load(engine, model, extra)
             except Exception as exc:  # noqa: BLE001 — surface engine spawn errors
-                self._json({"error": {"message": str(exc), "type": "server_error"}}, 500)
+                from mlx_edge.pool import annotate_load_error
+
+                self._json({"error": {"message": annotate_load_error(str(exc)), "type": "server_error"}}, 500)
                 return
             self._json({"ok": True, "model": item.as_openai(), "models": [m.public_id for m in pool.list()]})
 

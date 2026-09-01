@@ -80,6 +80,7 @@ You will need to `conda activate edge` in every new shell.
 ```bash
 conda activate edge
 mlx-edge update          # refresh git HEAD of mlx-lm and mlx-vlm
+mlx-edge build --help    # overlay a not-yet-merged PR (new model classes)
 mlx-edge status          # local vs conda-forge vs PyPI vs git
 edge-gui
 ```
@@ -94,7 +95,7 @@ so pip cannot replace the compiled `mlx` wheel.
 | Runtime | `mlx` | PyPI wheel (or conda-forge) | Compiled Metal. Do not rebuild from git unless you mean to. |
 | Text engine | `mlx-lm` | git overlay | Pure Python. Tracks new LLM architectures. |
 | Vision engine | `mlx-vlm` | git overlay | Pure Python. Tracks VLMs / omni models. Also serves embeddings. |
-| CLI | `mlx-edge` | this repo | `serve`, `load`, `unload`, `update`, `status`. |
+| CLI | `mlx-edge` | this repo | `serve`, `load`, `unload`, `update`, `build`, `status`. |
 | GUI | `edge-gui` | this repo | Studio that drives the CLI over `/v1`. |
 
 Dedicated embedding checkpoints (Qwen3-Embedding, bge, e5, gte, nomic, MiniLM)
@@ -136,6 +137,19 @@ mlx-edge update lm --ref abc123  # one engine, one commit
 
 `mlx-edge update mlx` is refused unless you pass `--force`.
 
+New architectures often land in a GitHub PR days before they merge. Overlay that
+exact ref without waiting:
+
+```bash
+mlx-edge build --help
+mlx-edge build git+https://github.com/ml-explore/mlx-lm.git@refs/pull/1398/head
+mlx-edge build 1398              # mlx-lm pull request
+mlx-edge build mlx-vlm#42
+```
+
+`mlx-edge build --help` prints the mlx-lm and mlx-vlm pulls URLs. Serve failures
+that look like a missing model class hint at the same command.
+
 ## CLI
 
 ```
@@ -146,6 +160,7 @@ mlx-edge unload --model MODEL
 mlx-edge models
 mlx-edge status [--json] [--offline]
 mlx-edge update [lm|vlm|all] [--ref SHA] [--branch main] [--pinned] [--force] [--with-deps]
+mlx-edge build [SPEC] [--engine lm|vlm|mlx] [--force] [--with-deps]
 mlx-edge pin
 mlx-edge rollback [lm|vlm|all]
 mlx-edge doctor

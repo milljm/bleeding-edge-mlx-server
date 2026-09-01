@@ -12,7 +12,7 @@ export default defineConfig({
     alias: { "@": path.resolve(dir, "src") },
   },
   root: dir,
-  publicDir: false,
+  publicDir: path.resolve(dir, "public"),
   build: {
     outDir: path.resolve(dir, "../src/mlx_edge/web"),
     emptyOutDir: true,

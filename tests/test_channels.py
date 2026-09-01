@@ -94,6 +94,7 @@ class ChannelTests(unittest.TestCase):
 
     def test_harmony_model_name(self):
         self.assertTrue(harmony_model_name("MiniMax-M2.7-ConfigI-MLX"))
+        self.assertTrue(harmony_model_name("MiniMax-M2-8bit"))
         self.assertTrue(harmony_model_name("openai/gpt-oss-20b"))
         self.assertFalse(harmony_model_name("Qwen3-8B-4bit"))
 

@@ -6,8 +6,10 @@ from unittest import mock
 
 from mlx_edge.templates import (
     HARMONY_TEMPLATE,
+    MINIMAX_THINK_TEMPLATE,
     has_local_template,
     template_for_spawn,
+    template_opens_generation,
 )
 
 
@@ -43,18 +45,51 @@ class TemplateTests(unittest.TestCase):
             self.assertIn("<|start|>assistant", extra[1])
             self.assertIn(HARMONY_TEMPLATE.strip()[:40], extra[1])
 
-    def test_minimax_m27_does_not_force_harmony_preset(self):
+    def test_minimax_m27_injects_think_template(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "MiniMax-M2.7-8bit"
             path.mkdir()
             (path / "config.json").write_text("{}", encoding="utf-8")
             with mock.patch("mlx_edge.templates._http_text", return_value=None):
                 extra = template_for_spawn(str(path), [])
-            self.assertEqual(extra, [])
+            self.assertEqual(extra[0], "--chat-template")
+            self.assertIn("]~b]ai", extra[1])
+            self.assertIn("<think>", extra[1])
+            self.assertNotIn("<|channel|>", extra[1])
+            gen = extra[1].split("add_generation_prompt")[-1]
+            self.assertIn("<think>", gen)
+
+    def test_minimax_m2_also_gets_think_opener(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "MiniMax-M2-8bit"
+            path.mkdir()
+            (path / "config.json").write_text("{}", encoding="utf-8")
+            with mock.patch("mlx_edge.templates._http_text", return_value=None):
+                extra = template_for_spawn(str(path), [])
+            self.assertIn("<think>", extra[1])
+            self.assertTrue(template_opens_generation(MINIMAX_THINK_TEMPLATE))
+
+    def test_minimax_stub_without_think_still_injects(self):
+        """mlx-community MiniMax often has a role-marker template and no <think>."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "MiniMax-M2.7-8bit"
+            path.mkdir()
+            stub = "{% for m in messages %}{{ ']~b]' ~ m.role }}{% endfor %}{% if add_generation_prompt %}]~b]ai{% endif %}"
+            (path / "tokenizer_config.json").write_text(
+                json.dumps({"chat_template": stub}),
+                encoding="utf-8",
+            )
+            self.assertTrue(has_local_template(str(path)))
+            self.assertFalse(template_opens_generation(stub))
+            with mock.patch("mlx_edge.templates._http_text", return_value=None):
+                extra = template_for_spawn(str(path), [])
+            self.assertEqual(extra[0], "--chat-template")
+            gen = extra[1].split("add_generation_prompt")[-1]
+            self.assertIn("<think>", gen)
+            self.assertIn("]~b]ai", gen)
 
     def test_harmony_generation_prompt_starts_in_final(self):
         self.assertIn("<|start|>assistant<|channel|>final<|message|>", HARMONY_TEMPLATE)
         gen = HARMONY_TEMPLATE.split("add_generation_prompt")[-1]
         self.assertIn("final", gen)
         self.assertNotIn("analysis", gen)
-

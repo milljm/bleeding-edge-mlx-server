@@ -6,7 +6,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from mlx_edge.cli import build_parser, cmd_engines, cmd_pin, cmd_update, main
+from mlx_edge.cli import build_parser, cmd_engines, cmd_pin, cmd_update, main, parse_build_spec
 
 
 class CliTests(unittest.TestCase):
@@ -15,6 +15,7 @@ class CliTests(unittest.TestCase):
         help_text = parser.format_help()
         self.assertIn("status", help_text)
         self.assertIn("update", help_text)
+        self.assertIn("build", help_text)
         self.assertIn("serve", help_text)
         self.assertIn("load", help_text)
         self.assertIn("unload", help_text)
@@ -129,6 +130,35 @@ class CliTests(unittest.TestCase):
     def test_unknown_command(self):
         with self.assertRaises(SystemExit):
             main(["not-a-command"])
+
+    def test_build_parses_git_url_and_pr(self):
+        engine, spec = parse_build_spec(
+            "git+https://github.com/ml-explore/mlx-lm.git@refs/pull/1398/head"
+        )
+        self.assertEqual(engine.id, "lm")
+        self.assertIn("1398", spec)
+        engine, spec = parse_build_spec("1398")
+        self.assertEqual(engine.id, "lm")
+        self.assertEqual(spec, "git+https://github.com/ml-explore/mlx-lm.git@refs/pull/1398/head")
+        engine, spec = parse_build_spec("mlx-vlm#42")
+        self.assertEqual(engine.id, "vlm")
+        self.assertIn("refs/pull/42/head", spec)
+        engine, spec = parse_build_spec("42", "vlm")
+        self.assertEqual(engine.id, "vlm")
+        parser = build_parser()
+        args = parser.parse_args(["build", "1398"])
+        self.assertEqual(args.spec, "1398")
+        empty = parser.parse_args(["build"])
+        self.assertFalse(empty.spec)
+
+    def test_build_help_lists_search_urls(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = main(["build"])
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("https://github.com/ml-explore/mlx-lm/pulls", out)
+        self.assertIn("https://github.com/Blaizzy/mlx-vlm/pulls", out)
 
 
 if __name__ == "__main__":
