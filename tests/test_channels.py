@@ -96,3 +96,47 @@ class ChannelTests(unittest.TestCase):
         self.assertTrue(harmony_model_name("MiniMax-M2.7-ConfigI-MLX"))
         self.assertTrue(harmony_model_name("openai/gpt-oss-20b"))
         self.assertFalse(harmony_model_name("Qwen3-8B-4bit"))
+
+    def test_minimax_m27_think_tags(self):
+        raw = "Need the current price.\n</think>\n\nApple is trading at $316.85."
+        content, reasoning = filter_text(raw, assume_analysis=True)
+        self.assertIn("316.85", content)
+        self.assertNotIn("</think>", content)
+        self.assertIn("price", reasoning)
+        self.assertNotIn("316.85", reasoning)
+
+    def test_minimax_m3_mm_think_tags(self):
+        raw = "<mm:think>plan the answer</mm:think>\nDone."
+        content, reasoning = filter_text(raw)
+        self.assertEqual(content.strip(), "Done.")
+        self.assertIn("plan the answer", reasoning)
+
+    def test_minimax_plain_answer_not_eaten(self):
+        content, reasoning = filter_text("Hello from MiniMax.", assume_analysis=True)
+        self.assertEqual(content, "Hello from MiniMax.")
+        self.assertEqual(reasoning, "")
+
+    def test_stream_think_then_answer(self):
+        filt = HarmonyFilter(assume_analysis=True)
+        c1, r1 = filt.push("thinking about stocks")
+        c2, r2 = filt.push("</think>\nApple is at $1.")
+        c3, r3 = filt.flush()
+        self.assertEqual((c1 + c2 + c3).strip(), "Apple is at $1.")
+        self.assertIn("thinking", r1 + r2 + r3)
+
+    def test_split_think_close(self):
+        filt = HarmonyFilter(assume_analysis=True)
+        c1, r1 = filt.push("plan </th")
+        self.assertEqual(c1, "")
+        self.assertEqual(r1, "")
+        c2, r2 = filt.push("ink>\nDone.")
+        c3, r3 = filt.flush()
+        self.assertEqual((c1 + c2 + c3).strip(), "Done.")
+        self.assertIn("plan", r1 + r2 + r3)
+
+    def test_qwen_streams_immediately(self):
+        filt = HarmonyFilter(assume_analysis=False)
+        content, reasoning = filt.push("Hello from Qwen.")
+        self.assertEqual(content, "Hello from Qwen.")
+        self.assertEqual(reasoning, "")
+

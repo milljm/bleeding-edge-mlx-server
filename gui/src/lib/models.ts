@@ -81,3 +81,9 @@ export function mergeCatalog(scanned: ModelRec[], extra: ModelRec[] = []): Model
 export function loadTarget(model: Pick<ModelRec, "source" | "path" | "repo">) {
   return model.source === "manual" ? model.repo : model.path || model.repo;
 }
+
+/** Loaded / in-use models float to the top; scan order is kept inside each group. */
+export function sortLoadedFirst<T>(models: T[], isLive: (model: T) => boolean): T[] {
+  return [...models].sort((a, b) => Number(isLive(b)) - Number(isLive(a)));
+}
+

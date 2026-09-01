@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mlx-edge"
-version = "0.8.0"
+version = "0.8.1"
 description = "Hot-load mlx-lm, mlx-vlm, and embedding models onto one OpenAI /v1 gateway, with an Edge GUI."
 readme = "README.md"
 license = { text = "MIT" }

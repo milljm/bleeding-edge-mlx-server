@@ -603,6 +603,13 @@ def _proxy_to(
             tracker.fail(model_id, str(exc))
 
 
+def _is_done_frame(frame: str) -> bool:
+    for line in frame.splitlines():
+        if line.startswith("data:") and line[5:].strip() == "[DONE]":
+            return True
+    return False
+
+
 def _pipe_sse(
     handler: BaseHTTPRequestHandler,
     resp: Any,
@@ -621,6 +628,7 @@ def _pipe_sse(
     handler.end_headers()
     leftover = b""
     sse_buf = b""
+    pending_done: str | None = None
     filt = HarmonyFilter(assume_analysis=assume_analysis) if strip_channels else None
     read1 = getattr(resp, "read1", None)
     try:
@@ -644,8 +652,22 @@ def _pipe_sse(
                 rewritten = _rewrite_sse_frame(frame, filt)
                 if rewritten is None:
                     continue
+                # OpenAI clients stop at [DONE]. Hold it until the filter
+                # can flush a MiniMax answer that was buffered as thinking.
+                if _is_done_frame(rewritten):
+                    pending_done = rewritten
+                    continue
                 handler.wfile.write(rewritten.encode("utf-8") + b"\n\n")
                 handler.wfile.flush()
+        if filt is not None and sse_buf.strip():
+            frame = sse_buf.decode("utf-8", "replace")
+            rewritten = _rewrite_sse_frame(frame, filt)
+            if rewritten:
+                if _is_done_frame(rewritten):
+                    pending_done = rewritten
+                else:
+                    handler.wfile.write(rewritten.encode("utf-8") + b"\n\n")
+                    handler.wfile.flush()
         if filt is not None:
             extra_c, extra_r = filt.flush()
             if extra_c or extra_r:
@@ -656,6 +678,9 @@ def _pipe_sse(
                     tail["choices"][0]["delta"]["reasoning_content"] = extra_r
                 handler.wfile.write(f"data: {json.dumps(tail)}\n\n".encode("utf-8"))
                 handler.wfile.flush()
+        if pending_done:
+            handler.wfile.write(pending_done.encode("utf-8") + b"\n\n")
+            handler.wfile.flush()
         if tracker:
             tracker.complete(model_id)
     except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
