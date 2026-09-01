@@ -1,7 +1,7 @@
 # Edge
 
 <p align="center">
-  <img src="docs/hero.jpg" alt="Edge studio with MiniMax-M3, an embedding model, and Qwen3-VL hot-loaded on one OpenAI /v1" width="920">
+  <img src="docs/hero.jpg" alt="Edge studio with MiniMax-M3 ConfigI, gpt-oss, and an embedding model hot-loaded on one OpenAI /v1" width="920">
 </p>
 
 Local OpenAI-compatible gateway for Apple Silicon. Hot-load `mlx-lm`,
