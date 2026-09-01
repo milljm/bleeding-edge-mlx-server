@@ -11,6 +11,8 @@
 # mlx-lm / mlx-vlm install from git HEAD so new architectures land without
 # waiting on a release. `-e .` is this repo's mlx-edge CLI.
 
+safetensors>=0.4
+torchvision>=0.20 # GLM5Next requirement
 mlx>=0.29.0
 mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git
 mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm.git

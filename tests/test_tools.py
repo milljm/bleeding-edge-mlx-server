@@ -92,3 +92,65 @@ class ToolParseTests(unittest.TestCase):
         content, _ = filt.flush()
         self.assertFalse(content.strip())
         self.assertEqual(filt.tool_calls[0]["function"]["name"], "read_file")
+
+    def test_special_wrap_minimax_token(self):
+        raw = (
+            ']<]minimax[>[\n<invoke name="read_file">'
+            '<parameter name="path">a.py</parameter></invoke>\n'
+            ']<]minimax[>['
+        )
+        cleaned, calls = extract_tool_markup(raw)
+        self.assertEqual(cleaned.strip(), "")
+        self.assertEqual(calls[0]["function"]["name"], "read_file")
+        self.assertEqual(json.loads(calls[0]["function"]["arguments"])["path"], "a.py")
+
+    def test_special_wrap_tool_call_spelling(self):
+        raw = (
+            ']<]minimax:tool_call[>[\n<invoke name="ls">'
+            '<parameter name="command">pwd</parameter></invoke>\n'
+            ']<]/minimax:tool_call[>['
+        )
+        _, calls = extract_tool_markup(raw)
+        self.assertEqual(calls[0]["function"]["name"], "ls")
+
+    def test_missing_angle_brackets(self):
+        # mlx-lm#1145: special tokens skipped, inner tags lose `<` / `</`.
+        raw = (
+            'invoke name="get_weather">\n'
+            'parameter name="location">Parisparameter>\n'
+            'invoke>'
+        )
+        cleaned, calls = extract_tool_markup(raw)
+        self.assertEqual(cleaned.strip(), "")
+        self.assertEqual(calls[0]["function"]["name"], "get_weather")
+        self.assertEqual(json.loads(calls[0]["function"]["arguments"])["location"], "Paris")
+
+    def test_control_tokens_stripped(self):
+        raw = (
+            ']~b]ai\n<minimax:tool_call>\n<invoke name="read_file">'
+            '<parameter name="path">x.py</parameter></invoke>\n'
+            '</minimax:tool_call>[e~['
+        )
+        cleaned, calls = extract_tool_markup(raw)
+        self.assertNotIn("]~b]", cleaned)
+        self.assertNotIn("[e~[", cleaned)
+        self.assertEqual(calls[0]["function"]["name"], "read_file")
+
+    def test_stream_special_wrap_split(self):
+        filt = HarmonyFilter(assume_analysis=True, parse_tools=True)
+        filt.push("plan")
+        c1, _ = filt.push("</think>\n]<")
+        self.assertFalse(c1.strip())
+        filt.push(']minimax[>[\n<invoke name="read_file">')
+        filt.push('<parameter name="path">a.py</parameter></invoke>\n]<]minimax[>[')
+        content, _ = filt.flush()
+        self.assertFalse(content.strip())
+        self.assertEqual(filt.tool_calls[0]["function"]["name"], "read_file")
+
+    def test_special_wrap_does_not_eat_plain_answer(self):
+        filt = HarmonyFilter(assume_analysis=True, parse_tools=True)
+        filt.push("just thinking")
+        c, _ = filt.push("</think>\nHello from MiniMax.")
+        more, _ = filt.flush()
+        self.assertEqual((c + more).strip(), "Hello from MiniMax.")
+        self.assertFalse(filt.tool_calls)

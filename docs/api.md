@@ -148,9 +148,10 @@ Hugging Face**, then Reload.
 The gateway splits thinking into `reasoning_content` and keeps OpenAI
 `content` as the visible answer. Thinking tokens stream immediately (they are
 not buffered until the closer). After `</think>` / `</mm:think>` the answer
-streams as `content`. **Tool calls** (MiniMax XML, Qwen `<tool_call>`, Harmony
-`to=functions.NAME`) become OpenAI `tool_calls` so agent clients can execute
-them. If MiniMax never emits a closer, the thinking is promoted
+streams as `content`. **Tool calls** (MiniMax XML — including tokenizer
+glyphs like `]<]minimax[>[` and mlx-lm dropping `<` on invoke tags — Qwen
+`<tool_call>`, Harmony `to=functions.NAME`) become OpenAI `tool_calls` so
+agent clients can execute them. If MiniMax never emits a closer, the thinking is promoted
 back to `content` so clients do not see an empty reply. `[DONE]` is held until
 that flush. **ConfigI / gpt-oss** start in Harmony's final channel — those
 tokens are `content` from the first delta (clients like LangChain that only
