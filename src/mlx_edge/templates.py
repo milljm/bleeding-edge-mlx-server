@@ -26,13 +26,33 @@ from mlx_edge import __version__
 
 USER_AGENT = f"mlx-edge/{__version__}"
 
-HARMONY_TEMPLATE = """{%- for message in messages -%}
+HARMONY_TEMPLATE = """{%- if tools -%}
+<|start|>system<|message|># Tools
+You may call one or more functions. Emit:
+<|channel|>commentary to=functions.NAME <|constrain|>json<|message|>{"arg":"..."}<|call|>
+{%- for tool in tools %}
+{%- set fn = tool.function if tool.function is defined and tool.function else tool %}
+- {{ fn.name }}: {{ fn.description | default('') }}
+  {{ fn.parameters | tojson }}
+{%- endfor %}
+<|end|>
+{%- endif -%}
+{%- for message in messages -%}
 {%- if message['role'] == 'system' -%}
 <|start|>system<|message|>{{ message['content'] }}<|end|>
 {%- elif message['role'] == 'user' -%}
 <|start|>user<|message|>{{ message['content'] }}<|end|>
 {%- elif message['role'] == 'assistant' -%}
+{%- if message.tool_calls -%}
+{%- for tool_call in message.tool_calls -%}
+{%- set fn = tool_call.function if tool_call.function is defined and tool_call.function else tool_call %}
+<|start|>assistant<|channel|>commentary to=functions.{{ fn.name }} <|constrain|>json<|message|>{{ fn.arguments if fn.arguments is string else fn.arguments | tojson }}<|call|>
+{%- endfor -%}
+{%- else -%}
 <|start|>assistant<|channel|>final<|message|>{{ message['content'] }}<|end|>
+{%- endif -%}
+{%- elif message['role'] == 'tool' -%}
+<|start|>{{ message.name | default('functions.tool') }} to=assistant<|channel|>commentary<|message|>{{ message['content'] }}<|end|>
 {%- else -%}
 <|start|>{{ message['role'] }}<|message|>{{ message['content'] }}<|end|>
 {%- endif -%}
@@ -57,7 +77,16 @@ MINIMAX_THINK_TEMPLATE = r"""{%- set model_identity = "You are a helpful assista
 {%- else -%}
     {{- model_identity }}
 {%- endif -%}
+{%- if tools -%}
+    {{- '\n\n# Tools\nYou may call one or more tools to assist with the user query.\nHere are the tools available in JSONSchema format:\n\n<tools>\n' }}
+    {%- for tool in tools -%}
+        {%- set fn = tool.function if tool.function is defined and tool.function else tool -%}
+        {{- '<tool>' ~ (fn | tojson) ~ '</tool>\n' }}
+    {%- endfor -%}
+    {{- '</tools>\n\nWhen making tool calls, use XML format to invoke tools and pass parameters:\n\n<minimax:tool_call>\n<invoke name="tool-name-1">\n<parameter name="param-key-1">param-value-1</parameter>\n</invoke>\n</minimax:tool_call>\n' }}
+{%- endif -%}
 {{- '[e~[' ~ '\n' }}
+{%- set last_tool_call = namespace(name=none) -%}
 {%- for message in conversation_messages -%}
     {%- if message['role'] == 'user' -%}
         {{- ']~b]user' ~ '\n' ~ message['content'] ~ '[e~[' ~ '\n' }}
@@ -66,8 +95,31 @@ MINIMAX_THINK_TEMPLATE = r"""{%- set model_identity = "You are a helpful assista
         {%- if message['reasoning_content'] -%}
             {{- '<think>' ~ '\n' ~ message['reasoning_content'] ~ '\n</think>' ~ '\n\n' }}
         {%- endif -%}
-        {{- message['content'] }}
+        {{- message['content'] or '' }}
+        {%- if message.tool_calls -%}
+            {{- '\n<minimax:tool_call>\n' }}
+            {%- for tool_call in message.tool_calls -%}
+                {%- set fn = tool_call.function if tool_call.function is defined and tool_call.function else tool_call -%}
+                {{- '<invoke name="' ~ fn.name ~ '">' }}
+                {%- set _args = fn.arguments -%}
+                {%- if _args is string -%}
+                    {%- set _args = _args -%}
+                    {{- '<parameter name="arguments">' ~ _args ~ '</parameter>' }}
+                {%- elif _args is mapping -%}
+                    {%- for k, v in _args.items() -%}
+                        {{- '<parameter name="' ~ k ~ '">' }}
+                        {{- v | tojson if v is not string else v }}
+                        {{- '</parameter>' }}
+                    {%- endfor -%}
+                {%- endif -%}
+                {{- '</invoke>\n' }}
+                {%- set last_tool_call.name = fn.name -%}
+            {%- endfor -%}
+            {{- '</minimax:tool_call>' }}
+        {%- endif -%}
         {{- '[e~[' ~ '\n' }}
+    {%- elif message['role'] == 'tool' -%}
+        {{- ']~b]tool\n<response>' ~ message['content'] ~ '</response>[e~[\n' }}
     {%- endif -%}
 {%- endfor -%}
 {%- if add_generation_prompt -%}

@@ -175,6 +175,13 @@ class LoadedModel:
             row["context_length"] = n
             row["max_model_len"] = n
             row["max_context_length"] = n
+            row["n_ctx"] = n
+        if self.engine != "embed":
+            row["capabilities"] = {
+                "vision": self.engine == "vlm",
+                "function_calling": True,
+                "tool_use": True,
+            }
         return row
 
     def as_lmstudio(self) -> dict[str, object]:
@@ -191,6 +198,10 @@ class LoadedModel:
             n = int(self.context)
             row["max_context_length"] = n
             row["loaded_context_length"] = n
+        row["capabilities"] = {
+            "vision": self.engine == "vlm",
+            "tool_use": self.engine != "embed",
+        }
         return row
 
 
