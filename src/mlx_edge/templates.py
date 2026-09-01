@@ -1,11 +1,16 @@
 """Inspect, fetch, and apply chat templates.
 
 MiniMax / gpt-oss checkpoints often ship without ``chat_template`` in
-``tokenizer_config.json``. mlx-lm then does not wrap messages, and the model
-prints Harmony special tokens as visible text. Edge will use a local template
-if present, otherwise pull one from Hugging Face. A compact Harmony template
-is only a last-resort fallback for gpt-oss / ConfigI names — not generic
-MiniMax-M2.7 / M3, which speak ``<think>`` / ``<mm:think>``.
+``tokenizer_config.json``. mlx-lm then does not wrap messages, and MiniMax
+buffers the whole think+answer until EOS (the playground dumps at the end).
+
+LM Studio's working MiniMax-M2.7 prompt ends with::
+
+    ]~b]ai
+    <think>
+
+Edge injects that generation prompt when the checkpoint has no think-capable
+template. ConfigI / gpt-oss still get Harmony ``<|channel|>``.
 """
 
 from __future__ import annotations
@@ -37,11 +42,59 @@ HARMONY_TEMPLATE = """{%- for message in messages -%}
 {%- endif -%}
 """
 
+# Official MiniMax-M2 / M2.7 generation prompt (LM Studio / MiniMaxAI jinja).
+# Special tokens `]~b]` / `[e~[` are literal pieces of the tokenizer vocab.
+MINIMAX_THINK_TEMPLATE = r"""{%- set model_identity = "You are a helpful assistant. Your name is MiniMax-M2.7 and is built by MiniMax." -%}
+{%- set system_message = none -%}
+{%- set conversation_messages = messages -%}
+{%- if messages and messages[0]['role'] == 'system' -%}
+    {%- set system_message = messages[0] -%}
+    {%- set conversation_messages = messages[1:] -%}
+{%- endif -%}
+{{- ']~!b[' ~ ']~b]system' ~ '\n' }}
+{%- if system_message and system_message['content'] -%}
+    {{- system_message['content'] }}
+{%- else -%}
+    {{- model_identity }}
+{%- endif -%}
+{{- '[e~[' ~ '\n' }}
+{%- for message in conversation_messages -%}
+    {%- if message['role'] == 'user' -%}
+        {{- ']~b]user' ~ '\n' ~ message['content'] ~ '[e~[' ~ '\n' }}
+    {%- elif message['role'] == 'assistant' -%}
+        {{- ']~b]ai' ~ '\n' }}
+        {%- if message['reasoning_content'] -%}
+            {{- '<think>' ~ '\n' ~ message['reasoning_content'] ~ '\n</think>' ~ '\n\n' }}
+        {%- endif -%}
+        {{- message['content'] }}
+        {{- '[e~[' ~ '\n' }}
+    {%- endif -%}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+{{- ']~b]ai' ~ '\n' ~ '<think>' ~ '\n' }}
+{%- endif -%}
+"""
+
 HF_NAME_HINTS = (
-    ("minimax", ("MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M3", "mlx-community/MiniMax-M2.7-4bit")),
+    ("minimax", ("MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M2", "MiniMaxAI/MiniMax-M3", "mlx-community/MiniMax-M2.7-4bit")),
     ("gpt-oss", ("openai/gpt-oss-20b",)),
     ("gpt_oss", ("openai/gpt-oss-20b",)),
 )
+
+
+def template_opens_generation(tmpl: str | None) -> bool:
+    """True if the jinja already puts the model in a think / Harmony channel."""
+    if not tmpl:
+        return False
+    lower = tmpl.lower()
+    # `]~b]ai` is only the MiniMax role marker — not enough. LM Studio streams
+    # because the generation prompt also opens <think>.
+    return (
+        "<think>" in lower
+        or "<mm:think>" in lower
+        or "<|channel|>" in lower
+        or "<|message|>" in tmpl
+    )
 
 
 def has_local_template(model_path: str) -> bool:
@@ -83,8 +136,13 @@ def inspect_template(model_path: str, repo: str | None = None) -> dict[str, Any]
 
 def fetch_template(model_path: str, repo: str | None = None) -> dict[str, Any]:
     info = inspect_template(model_path, repo)
-    if info["chat_template"]:
-        return info
+    local = info.get("chat_template")
+    preset = info.get("preset")
+    if isinstance(local, str) and local.strip():
+        # MiniMax quants often ship a stub template that does *not* open
+        # `<think>`. Treat that as missing so we can inject.
+        if template_opens_generation(local) or preset != "minimax-think":
+            return info
     tried: list[str] = []
     for candidate in _hf_candidates(model_path, repo):
         tried.append(candidate)
@@ -94,23 +152,28 @@ def fetch_template(model_path: str, repo: str | None = None) -> dict[str, Any]:
             info["source"] = f"huggingface:{candidate}"
             info["bundled"] = False
             return info
-    preset = info.get("preset")
     if preset == "harmony":
         info["chat_template"] = HARMONY_TEMPLATE
         info["source"] = "preset:harmony"
+        return info
+    if preset == "minimax-think":
+        info["chat_template"] = MINIMAX_THINK_TEMPLATE
+        info["source"] = "preset:minimax-think"
         return info
     info["tried"] = tried
     return info
 
 
 def template_for_spawn(model_path: str, extra: list[str]) -> list[str]:
-    """If mlx-lm would have no template, inject --chat-template."""
+    """If mlx-lm / mlx-vlm would have no think-capable template, inject --chat-template."""
     if any(arg == "--chat-template" or arg.startswith("--chat-template=") for arg in extra):
         return extra
     path = Path(os.path.expanduser(model_path))
     if not path.is_dir():
         return extra
-    if has_local_template(model_path):
+    local = read_local_template(model_path)
+    preset = _preset_for(model_path, None)
+    if local and (template_opens_generation(local) or preset != "minimax-think"):
         return extra
     info = fetch_template(model_path)
     tmpl = info.get("chat_template")
@@ -125,6 +188,8 @@ def _preset_for(model_path: str, repo: str | None) -> str | None:
     # Harmony is gpt-oss and thetom-ai ConfigI conversions.
     if "gpt-oss" in blob or "gpt_oss" in blob or "harmony" in blob or "configi" in blob:
         return "harmony"
+    if "minimax" in blob:
+        return "minimax-think"
     return None
 
 
@@ -160,7 +225,7 @@ def _hf_tokenizer_template(repo: str) -> str | None:
             continue
         if url.endswith(".jinja"):
             text = raw.strip()
-            if "{%" in text or "<|" in text:
+            if "{%" in text or "<|" in text or "<think>" in text.lower() or "]~b]" in text:
                 return text
             continue
         try:

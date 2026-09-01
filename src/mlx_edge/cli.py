@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -185,12 +186,95 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def pip_install_git(engine: Engine, ref: str | None, branch: str, with_deps: bool) -> int:
     spec = f"git+{engine.repo}@{ref or branch}"
+    return pip_install_spec(spec, with_deps)
+
+
+def pip_install_spec(spec: str, with_deps: bool) -> int:
     cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "--force-reinstall"]
     if not with_deps:
         cmd.append("--no-deps")
     cmd.append(spec)
     proc = run(cmd, check=False)
     return proc.returncode
+
+
+BUILD_EPILOG = """search for a possible engine update at:
+  mlx-lm   https://github.com/ml-explore/mlx-lm/pulls
+  mlx-vlm  https://github.com/Blaizzy/mlx-vlm/pulls
+
+examples:
+  mlx-edge build git+https://github.com/ml-explore/mlx-lm.git@refs/pull/1398/head
+  mlx-edge build 1398
+  mlx-edge build mlx-vlm#42
+"""
+
+_PR_SPEC = re.compile(
+    r"^(?:(?P<name>mlx-lm|mlx-vlm|mlx|lm|vlm)#)?(?P<pr>\d+)$",
+    re.I,
+)
+
+
+def parse_build_spec(spec: str, engine_id: str | None = None) -> tuple[Engine, str]:
+    """Turn a git+ URL, GitHub URL, or PR number into (engine, pip spec)."""
+    raw = spec.strip()
+    if not raw:
+        raise ValueError("empty build spec")
+    if raw.startswith("git+") or "github.com" in raw or raw.startswith("https://"):
+        url = raw if raw.startswith("git+") else f"git+{raw.lstrip('/')}"
+        if url.startswith("git+github.com"):
+            url = "git+https://" + url[len("git+") :]
+        engine = _engine_from_url(url, engine_id)
+        return engine, url
+    match = _PR_SPEC.fullmatch(raw)
+    if match:
+        name = (match.group("name") or engine_id or "lm").lower()
+        aliases = {"mlx-lm": "lm", "mlx-vlm": "vlm"}
+        engine = get_engine(aliases.get(name, name))
+        url = f"git+{engine.repo}@refs/pull/{match.group('pr')}/head"
+        return engine, url
+    raise ValueError(
+        f"unrecognized build spec {spec!r}. pass a git+ URL or PR number (mlx-edge build --help)"
+    )
+
+
+def _engine_from_url(url: str, engine_id: str | None) -> Engine:
+    if engine_id:
+        return get_engine(engine_id)
+    lower = url.lower()
+    if "mlx-vlm" in lower:
+        return get_engine("vlm")
+    if "mlx-lm" in lower or "mlx_lm" in lower:
+        return get_engine("lm")
+    if re.search(r"github\.com/[^/]+/mlx(?:\.git|@|/|$)", lower):
+        return get_engine("mlx")
+    return get_engine("lm")
+
+
+def cmd_build(args: argparse.Namespace) -> int:
+    spec = (getattr(args, "spec", None) or "").strip()
+    if not spec:
+        sys.stdout.write(BUILD_EPILOG)
+        return 0
+    try:
+        engine, pip_spec = parse_build_spec(spec, getattr(args, "engine", None))
+    except ValueError as exc:
+        print(red(str(exc)), file=sys.stderr)
+        sys.stderr.write(BUILD_EPILOG)
+        return 2
+    if engine.compiled and not args.force:
+        print(
+            red(
+                f"refusing to git-install {engine.dist} (compiled). "
+                "it belongs on conda-forge. pass --force to override."
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    print(bold(f"build {engine.dist} from {pip_spec}"))
+    code = pip_install_spec(pip_spec, args.with_deps)
+    if code == 0:
+        print(green("ok") + dim("  run mlx-edge status"))
+    return code
 
 
 def cmd_update(args: argparse.Namespace) -> int:
@@ -307,7 +391,9 @@ def cmd_serve(args: argparse.Namespace, rest: list[str]) -> int:
         try:
             pool.load(engine_id, model, rest)
         except Exception as exc:  # noqa: BLE001
-            print(red(str(exc)), file=sys.stderr)
+            from mlx_edge.pool import annotate_load_error
+
+            print(red(annotate_load_error(str(exc))), file=sys.stderr)
             pool.unload_all()
             return 1
 
@@ -517,6 +603,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="let pip resolve deps (can replace conda mlx — avoid)",
     )
     p_update.set_defaults(func=cmd_update)
+
+    p_build = sub.add_parser(
+        "build",
+        help="overlay an mlx-lm / mlx-vlm git URL or GitHub pull request",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Install a not-yet-merged engine so new model classes load.",
+        epilog=BUILD_EPILOG,
+    )
+    p_build.add_argument(
+        "spec",
+        nargs="?",
+        help="git+ URL, PR number (mlx-lm), or engine#PR (mlx-vlm#42)",
+    )
+    p_build.add_argument("--engine", choices=("lm", "vlm", "mlx"), help="when spec is a bare PR number")
+    p_build.add_argument("--force", action="store_true", help="allow git-install of compiled mlx")
+    p_build.add_argument(
+        "--with-deps",
+        action="store_true",
+        help="let pip resolve deps (can replace conda mlx — avoid)",
+    )
+    p_build.set_defaults(func=cmd_build)
 
     p_pin = sub.add_parser("pin", help="write current git SHAs to ~/.config/mlx-edge/pins.json")
     p_pin.set_defaults(func=cmd_pin)

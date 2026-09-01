@@ -5,6 +5,7 @@ from unittest import mock
 
 from mlx_edge.pool import (
     ModelPool,
+    annotate_load_error,
     names_match,
     server_argv,
     spawn_argv,
@@ -207,6 +208,13 @@ class PoolTests(unittest.TestCase):
             pool.mark_busy(chat.public_id, False)
             pool.reheat_others(embed)
             self.assertNotIn(chat.public_id, pool._warm_pending)
+
+    def test_load_error_hints_build_help(self):
+        msg = annotate_load_error("MiniMax-M3 exited with code 1")
+        self.assertIn("mlx-edge build --help", msg)
+        self.assertIn("MiniMax-M3", msg)
+        again = annotate_load_error(msg)
+        self.assertEqual(again.count("mlx-edge build"), 1)
 
 
 if __name__ == "__main__":

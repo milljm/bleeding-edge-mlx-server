@@ -91,6 +91,18 @@ def names_match(left: str, right: str) -> bool:
     return a.split("/")[-1] == b.split("/")[-1]
 
 
+def annotate_load_error(message: str) -> str:
+    """Point at `mlx-edge build --help` when an architecture is missing from the engine."""
+    text = (message or "Serve failed").rstrip()
+    if "mlx-edge build" in text:
+        return text
+    return (
+        f"{text}\n"
+        "Hint: if this architecture is missing from mlx-lm / mlx-vlm, "
+        "run mlx-edge build --help"
+    )
+
+
 def server_argv(engine_id: str) -> list[str]:
     """Prefer `python -m mlx_lm server` — `python -m mlx_lm.server` is deprecated."""
     if engine_id == "lm":
@@ -239,7 +251,7 @@ class ModelPool:
 
     def load(self, engine: str, model: str, extra: list[str] | None = None) -> LoadedModel:
         extra = list(extra or [])
-        if engine == "lm":
+        if engine in {"lm", "vlm"}:
             extra = template_for_spawn(model, extra)
         existing = self.resolve(model)
         if existing:
@@ -267,8 +279,8 @@ class ModelPool:
             self.progress.drop(item.public_id)
             label = item.public_id
             if code is not None:
-                raise RuntimeError(f"{label} exited with code {code}") from exc
-            raise RuntimeError(f"{label} failed to start: {exc}") from exc
+                raise RuntimeError(annotate_load_error(f"{label} exited with code {code}")) from exc
+            raise RuntimeError(annotate_load_error(f"{label} failed to start: {exc}")) from exc
         if proc is not None:
             warmup_engine(item)
             self._warm_at[item.public_id] = time.time()

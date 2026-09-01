@@ -14,7 +14,7 @@
   --edge-muted: #1a1c1a;
   --edge-muted-fg: #8b9186;
   --edge-accent: #1f221f;
-  --edge-destructive: #c45c4a;
+  --edge-destructive: #ff4a36;
   --edge-border: color-mix(in oklab, #eceee9 12%, transparent);
   --edge-input: color-mix(in oklab, #eceee9 14%, transparent);
   --edge-ring: #c5c9c0;
@@ -38,7 +38,7 @@ html[data-theme="light"] {
   --edge-muted: #e3dccb;
   --edge-muted-fg: #5d512d;
   --edge-accent: #ddd6c6;
-  --edge-destructive: #b94a3c;
+  --edge-destructive: #c4120a;
   --edge-border: color-mix(in oklab, #3a3630 12%, transparent);
   --edge-input: color-mix(in oklab, #3a3630 14%, transparent);
   --edge-ring: #6b6558;

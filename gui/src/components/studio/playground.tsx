@@ -7,7 +7,8 @@ import { loadTarget, publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
-type ChatTurn = { role: "user" | "assistant"; text: string };
+type ChatTurn = { role: "user" | "assistant"; text: string; thinking?: string };
+
 
 export function Playground() {
   const model = useStudio((s) => s.selected());
@@ -122,6 +123,7 @@ function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: nu
 function ChatPlayground({ live }: { live: boolean }) {
   const model = useStudio((s) => s.selected());
   const served = useStudio((s) => s.served);
+  const flags = useStudio((s) => s.flags);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -159,7 +161,8 @@ function ChatPlayground({ live }: { live: boolean }) {
     setBusy(true);
     let assistant = "";
     let reasoning = "";
-    const paint = (value: string) => setTurns([...next, { role: "assistant", text: value }]);
+    const paint = (value: string, thinkText = "") =>
+      setTurns([...next, { role: "assistant", text: value, thinking: thinkText || undefined }]);
     try {
       const res = await fetch("/v1/chat/completions", {
         method: "POST",
@@ -167,7 +170,7 @@ function ChatPlayground({ live }: { live: boolean }) {
         body: JSON.stringify({
           model: loadTarget(model),
           messages: next.map((t) => ({ role: t.role, content: t.text })),
-          max_tokens: 256,
+          max_tokens: Number(flags.maxTokens) || 512,
           stream: true,
         }),
       });
@@ -198,20 +201,22 @@ function ChatPlayground({ live }: { live: boolean }) {
                 const think = deltaReasoning(payload);
                 if (think) reasoning += think;
                 if (piece) assistant += piece;
-                if (piece || think) paint(assistant || reasoning);
+                if (piece || think) paint(assistant, reasoning);
               } catch {
                 /* ignore malformed chunk */
               }
             }
           }
         }
-        if (!assistant) paint(reasoning.trim() || "(empty)");
+        if (!assistant) paint(reasoning.trim() ? "" : "(empty)", reasoning.trim());
+        else paint(assistant, reasoning);
       } else {
         const body = (await res.json()) as {
           choices?: { message?: { content?: string; reasoning_content?: string } }[];
         };
         const msg = body.choices?.[0]?.message;
-        paint((msg?.content || msg?.reasoning_content || "").trim() || "(empty)");
+        paint((msg?.content || "").trim(), (msg?.reasoning_content || "").trim());
+        if (!msg?.content && !msg?.reasoning_content) paint("(empty)");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
@@ -255,21 +260,32 @@ function ChatPlayground({ live }: { live: boolean }) {
               )}
             >
               <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {turn.role}
+                {turn.role === "assistant" && turn.thinking && !turn.text ? "thinking" : turn.role}
               </p>
-              {turn.role === "assistant" && !turn.text && prefill ? (
+              {turn.role === "assistant" && !turn.text && !turn.thinking && prefill ? (
                 <PrefillMeter
                   processed={prefill.processed_tokens}
                   total={prefill.total_tokens}
                   pct={prefillPct}
                 />
               ) : (
-                <p className="leading-relaxed whitespace-pre-wrap">
-                  {turn.text}
-                  {busy && i === turns.length - 1 && turn.role === "assistant" ? (
-                    <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
+                <>
+                  {turn.thinking ? (
+                    <p className="mb-2 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic">
+                      {turn.thinking}
+                    </p>
                   ) : null}
-                </p>
+                  {turn.text ? (
+                    <p className="leading-relaxed whitespace-pre-wrap">
+                      {turn.text}
+                      {busy && i === turns.length - 1 && turn.role === "assistant" ? (
+                        <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
+                      ) : null}
+                    </p>
+                  ) : busy && i === turns.length - 1 && turn.role === "assistant" ? (
+                    <span className="inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
+                  ) : null}
+                </>
               )}
             </article>
           ))
