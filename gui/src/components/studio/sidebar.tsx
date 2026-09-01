@@ -3,8 +3,8 @@ import { ChevronRight, Folder, PanelLeft, Plus, RefreshCw, Search, Trash2 } from
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatContext, DIR_PLACEHOLDER, sortLoadedFirst } from "@/lib/models";
-import { modelIsLive } from "@/lib/edge-api";
+import { formatContext, DIR_PLACEHOLDER } from "@/lib/models";
+import { modelIsBusy, modelIsLive } from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +24,7 @@ export function Sidebar({
   const scanErrors = useStudio((s) => s.scanErrors);
   const loadingId = useStudio((s) => s.loadingId);
   const failed = useStudio((s) => s.failed);
+  const progress = useStudio((s) => s.progress);
   const addWatchDir = useStudio((s) => s.addWatchDir);
   const removeWatchDir = useStudio((s) => s.removeWatchDir);
   const setDirDraft = useStudio((s) => s.setDirDraft);
@@ -155,7 +156,7 @@ export function Sidebar({
                 const live = modelIsLive(served, model);
                 const error = failed[model.id];
                 const loading = loadingId === model.id;
-                const inUse = live || loading;
+                const busy = modelIsBusy(progress, model);
                 const context = formatContext(model.context);
                 return (
                   <li key={model.id}>
@@ -176,8 +177,17 @@ export function Sidebar({
                       <span
                         className={cn(
                           "mt-1.5 size-1.5 shrink-0 rounded-full",
-                          loading ? "animate-pulse bg-hot" : live ? "bg-hot" : error ? "bg-destructive" : "bg-border",
+                          busy
+                            ? "busy-dot"
+                            : loading
+                              ? "animate-pulse bg-primary"
+                              : live
+                                ? "bg-ok"
+                                : error
+                                  ? "bg-destructive"
+                                  : "bg-border",
                         )}
+                        title={busy ? "generating" : loading ? "loading" : live ? "loaded" : error ? "failed" : undefined}
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">{model.name}</span>
@@ -186,7 +196,7 @@ export function Sidebar({
                             {model.engine}
                           </Badge>
                           <span className="text-xs text-muted-foreground">
-                            {loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}
+                            {busy ? "generating · " : loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}
                             {model.quant} · {model.size}
                             {context ? ` · ${context}` : ""}
                           </span>

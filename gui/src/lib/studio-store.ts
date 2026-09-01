@@ -13,6 +13,7 @@ import {
   postUnload,
   putPrefs,
   type GatewayInfo,
+  type ProgressSnapshot,
   type ScanError,
   type ServedRuntime,
 } from "./edge-api";
@@ -36,6 +37,7 @@ type StudioState = {
   loadingId: string | null;
   failed: Record<string, string>;
   hydrated: boolean;
+  progress: ProgressSnapshot | null;
   addWatchDir: (dir: string) => Promise<void>;
   removeWatchDir: (dir: string) => Promise<void>;
   setDirDraft: (value: string) => void;
@@ -53,6 +55,7 @@ type StudioState = {
   syncServed: () => Promise<void>;
   selected: () => ModelRec | undefined;
   isLoaded: (id?: string | null) => boolean;
+  setProgress: (progress: ProgressSnapshot | null) => void;
 };
 
 function catalog(scanned: ModelRec[], extra: ModelRec[], selectedId: string | null) {
@@ -95,6 +98,7 @@ export const useStudio = create<StudioState>()(
       loadingId: null,
       failed: {},
       hydrated: false,
+      progress: null,
       addWatchDir: async (dir) => {
         const trimmed = dir.trim();
         if (!trimmed) return;
@@ -155,6 +159,7 @@ export const useStudio = create<StudioState>()(
         const model = get().models.find((m) => m.id === id) ?? (id ? { id, repo: id } : null);
         return modelIsLive(get().served, model);
       },
+      setProgress: (progress) => set({ progress }),
       scanWatchDirs: async () => {
         const dirs = get().watchDirs;
         if (!dirs.length) {

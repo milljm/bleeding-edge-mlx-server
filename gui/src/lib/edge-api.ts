@@ -206,6 +206,36 @@ export async function getProgress(model?: string): Promise<ProgressSnapshot> {
   const url = model ? `/v1/progress?model=${encodeURIComponent(model)}` : "/v1/progress";
   const res = await fetch(url);
   const body = (await parseJson(res)) as Partial<ProgressSnapshot>;
+  return normalizeProgress(body);
+}
+
+/** EventSource for `GET /v1/progress/stream`. Same snapshot as `getProgress`. */
+export function subscribeProgress(onSnap: (snap: ProgressSnapshot) => void): () => void {
+  const es = new EventSource("/v1/progress/stream");
+  es.onmessage = (ev) => {
+    try {
+      onSnap(normalizeProgress(JSON.parse(String(ev.data || "{}")) as Partial<ProgressSnapshot>));
+    } catch {
+      /* skip a torn frame */
+    }
+  };
+  return () => es.close();
+}
+
+export function modelIsBusy(
+  snap: ProgressSnapshot | null | undefined,
+  model?: { id: string; repo: string; path?: string; name?: string } | null,
+): boolean {
+  if (!snap?.active || !model) return false;
+  const needles = [model.repo, model.id, model.path, model.name].filter((n): n is string => Boolean(n));
+  return snap.models.some((row) => {
+    const processing = row.status === "processing" || row.phase === "prefill" || row.phase === "decode";
+    if (!processing) return false;
+    return needles.some((n) => sameModel(row.id, n));
+  });
+}
+
+function normalizeProgress(body: Partial<ProgressSnapshot>): ProgressSnapshot {
   return {
     object: "edge.progress",
     version: 1,

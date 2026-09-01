@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getPrefs, modelIsLive } from "@/lib/edge-api";
+import { getPrefs, modelIsLive, subscribeProgress } from "@/lib/edge-api";
 import { flagsDirty } from "@/lib/flags";
 import { engineLabel, loadedSummary } from "@/lib/command";
 import { useStudio, type StudioTab } from "@/lib/studio-store";
@@ -23,6 +23,7 @@ const SIDEBAR_DEFAULT = 320;
 
 export function AppShell() {
   useRehydrateStudio();
+  useProgressStream();
   const [navOpen, setNavOpen] = useState(false);
   const sidebar = useSidebarLayout();
   const model = useStudio((s) => s.selected());
@@ -300,6 +301,11 @@ function ThemeToaster() {
       }}
     />
   );
+}
+
+function useProgressStream() {
+  const setProgress = useStudio((s) => s.setProgress);
+  useEffect(() => subscribeProgress(setProgress), [setProgress]);
 }
 
 function useSidebarLayout() {
