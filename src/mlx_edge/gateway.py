@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from mlx_edge.channels import HarmonyFilter, harmony_model_name, rewrite_completion_payload
+from mlx_edge.channels import HarmonyFilter, assume_think_start, rewrite_completion_payload
 from mlx_edge.pool import Inflight, LoadedModel, ModelPool
 from mlx_edge.progress import ProgressTracker
 
@@ -535,7 +535,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     stream=stream,
                     progress=pool.progress,
                     strip_channels=item.engine != "embed",
-                    assume_analysis=harmony_model_name(item.model, item.public_id),
+                    assume_analysis=assume_think_start(item.model, item.public_id),
                     job=job,
                     logs=pool.logs,
                 )

@@ -196,8 +196,22 @@ def looks_like_think(text: str) -> bool:
 
 
 def harmony_model_name(*names: str) -> bool:
+    """True when Edge should strip Harmony / MiniMax think wrappers."""
     blob = " ".join(n for n in names if n).lower()
     return "minimax" in blob or "gpt-oss" in blob or "gpt_oss" in blob or "harmony" in blob
+
+
+def assume_think_start(*names: str) -> bool:
+    """HF MiniMax-M2.7 / M3 templates put ``<think>`` in the prompt.
+
+    Generation then starts *inside* thinking, so the filter must treat the
+    first tokens as analysis. ConfigI / gpt-oss are Harmony and start in
+    the final channel — those tokens are already the answer.
+    """
+    blob = " ".join(n for n in names if n).lower()
+    if "configi" in blob or "gpt-oss" in blob or "gpt_oss" in blob or "harmony" in blob:
+        return False
+    return "minimax" in blob
 
 
 def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str, Any] | None:

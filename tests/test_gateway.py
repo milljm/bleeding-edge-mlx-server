@@ -472,6 +472,71 @@ class GatewayTests(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
 
+    def test_configi_streams_content_on_each_delta(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        class ConfigIStream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"Here"}}]}\n\n')
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"\'s a plot"}}]}\n\n')
+                self.wfile.write(b'data: {"choices":[{"delta":{"finish_reason":"stop"}}]}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), ConfigIStream)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-ConfigI-MLX",
+                engine="lm",
+                model="/Users/milljm/.lmstudio/models/thetom-ai/MiniMax-M2.7-ConfigI-MLX",
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-ConfigI-MLX",
+            )
+            self.pool._models[item.id] = item
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "MiniMax-M2.7-ConfigI-MLX",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = resp.read().decode()
+            contents = []
+            for block in body.split("\n\n"):
+                if not block.startswith("data:") or "[DONE]" in block:
+                    continue
+                payload = json.loads(block.split("data:", 1)[1].strip())
+                delta = (payload.get("choices") or [{}])[0].get("delta") or {}
+                if "content" in delta:
+                    contents.append(delta["content"])
+            self.assertEqual(contents[0], "Here")
+            self.assertIn("'s a plot", contents)
+            self.assertNotIn("reasoning_content", body)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_non_stream_chat_still_json(self):
         from http.server import BaseHTTPRequestHandler
 

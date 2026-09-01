@@ -141,7 +141,10 @@ The gateway splits thinking into `reasoning_content` and keeps OpenAI
 not buffered until the closer). After `</think>` / `</mm:think>` the answer
 streams as `content`. If MiniMax never emits a closer, the thinking is promoted
 back to `content` so clients do not see an empty reply. `[DONE]` is held until
-that flush. Plain Qwen / Llama output is untouched.
+that flush. **ConfigI / gpt-oss** start in Harmony's final channel — those
+tokens are `content` from the first delta (clients like LangChain that only
+read `delta.content` would otherwise see empty chunks and one dump at EOS).
+Plain Qwen / Llama output is untouched.
 
 ## Hot-load vs LM Studio
 
