@@ -30,6 +30,12 @@ npm run build:gui
 
 Commit both the source and the rebuilt `web/` files.
 
+## Docs
+
+`README.md` is the product page. Long API notes (endpoints, progress JSON,
+thinking tags, keep-hot) live in `docs/api.md` — do not pile them back into
+the README.
+
 ## Recipe
 
 `conda-recipe/meta.yaml` is the feedstock sketch. When submitting to
