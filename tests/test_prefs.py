@@ -19,6 +19,20 @@ class PrefsTests(unittest.TestCase):
             self.assertEqual(loaded["watchDirs"], ["~/.lmstudio/models"])
             self.assertEqual(loaded["flagsByModel"]["MiniMax"]["temp"], 0.2)
 
+    def test_engine_override_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "studio.json"
+            save_prefs(
+                {
+                    "watchDirs": ["~/.lmstudio/models"],
+                    "engineByModel": {"thetom-ai/MiniMax-M3-ConfigI-MLX": "lm", "bad": "nope"},
+                },
+                path=path,
+            )
+            loaded = load_prefs(path)
+            self.assertEqual(loaded["engineByModel"]["thetom-ai/MiniMax-M3-ConfigI-MLX"], "lm")
+            self.assertNotIn("bad", loaded["engineByModel"])
+
     def test_empty_payload_does_not_invent_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "studio.json"

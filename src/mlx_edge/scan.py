@@ -29,6 +29,10 @@ INDEX_NAMES = {
     "model.npz.index.json",
     "weights.safetensors.index.json",
 }
+# Text-only on mlx-lm even when the type name looks VL. MiniMax-M3
+# (`minimax_m3_vl`) ships a vision tower mlx-lm ignores; the working loader is
+# patched mlx-lm (`mlx-edge build`), not mlx-vlm.
+LM_MODEL_TYPES = ("minimax_m3_vl",)
 VLM_MARKERS = (
     "vision",
     "vlm",
@@ -281,6 +285,9 @@ def _infer_engine(cfg: dict[str, Any], repo: str, folder: str) -> str:
     ).lower().replace("-", "_")
     if any(marker in blob for marker in EMBED_NAME_MARKERS):
         return "embed"
+    model_type = str(cfg.get("model_type") or "").lower().replace("-", "_")
+    if model_type in LM_MODEL_TYPES:
+        return "lm"
     if any(cfg.get(key) for key in ("vision_config", "image_config", "audio_config")):
         return "vlm"
     if any(marker in blob for marker in EMBED_ARCH_MARKERS):

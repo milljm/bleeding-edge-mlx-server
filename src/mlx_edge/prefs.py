@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any
 
 PREFS_PATH = Path.home() / ".config" / "mlx-edge" / "studio.json"
+ENGINES = {"lm", "vlm", "embed"}
 
 
 def empty_prefs() -> dict[str, Any]:
-    return {"watchDirs": [], "flagsByModel": {}}
+    return {"watchDirs": [], "flagsByModel": {}, "engineByModel": {}}
 
 
 def load_prefs(path: Path | None = None) -> dict[str, Any]:
@@ -47,4 +48,12 @@ def _clean(raw: dict[str, Any]) -> dict[str, Any]:
             name = str(key).strip()
             if name and isinstance(value, dict):
                 flags[name] = value
-    return {"watchDirs": dirs, "flagsByModel": flags}
+    engines_raw = raw.get("engineByModel") or raw.get("engine_by_model") or {}
+    engines: dict[str, str] = {}
+    if isinstance(engines_raw, dict):
+        for key, value in engines_raw.items():
+            name = str(key).strip()
+            engine = str(value or "").strip().lower()
+            if name and engine in ENGINES:
+                engines[name] = engine
+    return {"watchDirs": dirs, "flagsByModel": flags, "engineByModel": engines}

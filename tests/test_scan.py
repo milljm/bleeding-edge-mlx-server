@@ -105,6 +105,26 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(rec["path"], str(snap))
             self.assertEqual(rec["engine"], "lm")
 
+    def test_minimax_m3_vl_scans_as_lm(self):
+        """minimax_m3_vl looks VL but runs text-only on patched mlx-lm."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "thetom-ai" / "MiniMax-M3-ConfigI-MLX"
+            path.mkdir(parents=True)
+            (path / "config.json").write_text(
+                json.dumps(
+                    {
+                        "model_type": "minimax_m3_vl",
+                        "architectures": ["MiniMaxM3SparseForConditionalGeneration"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (path / "model.safetensors").write_bytes(b"w")
+            models = list_models(str(root))
+            self.assertEqual(models[0]["engine"], "lm")
+            self.assertEqual(models[0]["repo"], "thetom-ai/MiniMax-M3-ConfigI-MLX")
+
     def test_single_model_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "Qwen3-8B-4bit"

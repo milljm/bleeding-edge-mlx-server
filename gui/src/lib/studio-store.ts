@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { defaultFlags, flagArgs, flagsForModel, mergeFlags, type FlagValues } from "./flags";
-import { flagKey, loadTarget, mergeCatalog, migrateWatchDirs, type ModelRec } from "./models";
+import { defaultFlags, flagArgs, flagsForModel, mergeFlags, type EngineKind, type FlagValues } from "./flags";
+import { applyEngineOverrides, flagKey, loadTarget, mergeCatalog, migrateWatchDirs, type ModelRec } from "./models";
 import {
   DEFAULT_GATEWAY,
   getHealth,
@@ -28,13 +28,14 @@ type StudioState = {
   selectedId: string | null;
   flags: FlagValues;
   flagsByModel: Record<string, FlagValues>;
+  engineByModel: Partial<Record<string, EngineKind>>;
   served: ServedRuntime[];
   gateway: GatewayInfo;
   tab: StudioTab;
   dirDraft: string;
   scanning: boolean;
   scanErrors: ScanError[];
-  loadingId: string | null;
+  loadingIds: string[];
   pinKeys: string[];
   failed: Record<string, string>;
   hydrated: boolean;
@@ -45,9 +46,14 @@ type StudioState = {
   selectModel: (id: string) => void;
   setFlag: (key: string, value: string | number | boolean) => void;
   resetFlags: () => void;
+  setEngineOverride: (engine: EngineKind | null) => void;
   setTab: (tab: StudioTab) => void;
   setHydrated: () => void;
-  applyPrefs: (prefs: { watchDirs?: string[]; flagsByModel?: Record<string, FlagValues> }) => void;
+  applyPrefs: (prefs: {
+    watchDirs?: string[];
+    flagsByModel?: Record<string, FlagValues>;
+    engineByModel?: Partial<Record<string, EngineKind>>;
+  }) => void;
   persistPrefs: () => Promise<void>;
   scanWatchDirs: () => Promise<void>;
   startServe: () => Promise<void>;
@@ -80,6 +86,14 @@ function attachFlags(next: ServedRuntime[], prev: ServedRuntime[], justLoaded?: 
   });
 }
 
+function withLoading(ids: string[], id: string): string[] {
+  return ids.includes(id) ? ids : [...ids, id];
+}
+
+function withoutLoading(ids: string[], id: string): string[] {
+  return ids.filter((item) => item !== id);
+}
+
 /** Catalog ids that should stay orange + sorted: currently live, plus any extras (loading). */
 export function pinCatalogIds(
   models: ModelRec[],
@@ -106,13 +120,14 @@ export const useStudio = create<StudioState>()(
       selectedId: null,
       flags: defaultFlags(),
       flagsByModel: {},
+      engineByModel: {},
       served: [],
       gateway: DEFAULT_GATEWAY,
       tab: "settings",
       dirDraft: "",
       scanning: false,
       scanErrors: [],
-      loadingId: null,
+      loadingIds: [],
       pinKeys: [],
       failed: {},
       hydrated: false,
@@ -153,21 +168,36 @@ export const useStudio = create<StudioState>()(
         set({ flags, flagsByModel });
         void get().persistPrefs();
       },
+      setEngineOverride: (engine) => {
+        const model = get().selected();
+        if (!model) return;
+        const key = flagKey(model);
+        const engineByModel = { ...get().engineByModel };
+        if (engine) engineByModel[key] = engine;
+        else delete engineByModel[key];
+        const models = applyEngineOverrides(get().models, engineByModel);
+        const selected = models.find((m) => m.id === model.id) ?? model;
+        const flags = flagsForModel(selected, get().flagsByModel[key]);
+        set({ engineByModel, models, flags });
+        void get().persistPrefs();
+      },
       setTab: (tab) => set({ tab }),
       setHydrated: () => set({ hydrated: true }),
       applyPrefs: (prefs) => {
         const fromServer = migrateWatchDirs(prefs.watchDirs);
         const watchDirs = fromServer.length ? fromServer : migrateWatchDirs(get().watchDirs);
         const flagsByModel = { ...get().flagsByModel, ...(prefs.flagsByModel ?? {}) };
-        const model = get().models.find((m) => m.id === get().selectedId);
+        const engineByModel = { ...get().engineByModel, ...(prefs.engineByModel ?? {}) };
+        const models = applyEngineOverrides(get().models, engineByModel);
+        const model = models.find((m) => m.id === get().selectedId);
         const flags = flagsForModel(model, model ? flagsByModel[flagKey(model)] : get().flags);
-        set({ watchDirs, flagsByModel, flags });
+        set({ watchDirs, flagsByModel, engineByModel, models, flags });
       },
       persistPrefs: async () => {
         if (!get().hydrated) return;
-        const { watchDirs, flagsByModel } = get();
+        const { watchDirs, flagsByModel, engineByModel } = get();
         try {
-          await putPrefs({ watchDirs, flagsByModel });
+          await putPrefs({ watchDirs, flagsByModel, engineByModel });
         } catch {
           /* preview without a gateway still keeps localStorage */
         }
@@ -192,12 +222,14 @@ export const useStudio = create<StudioState>()(
         try {
           const { models, errors } = await postScan(dirs);
           const next = catalog(models, [], get().selectedId);
-          const selected = next.models.find((m) => m.id === next.selectedId);
+          const applied = applyEngineOverrides(next.models, get().engineByModel);
+          const selected = applied.find((m) => m.id === next.selectedId);
           set({
             scanning: false,
             scanErrors: errors,
             flags: flagsForModel(selected, selected ? get().flagsByModel[flagKey(selected)] : undefined),
             ...next,
+            models: applied,
           });
         } catch (err) {
           set({
@@ -209,13 +241,15 @@ export const useStudio = create<StudioState>()(
       startServe: async () => {
         const model = get().selected();
         if (!model) return;
+        if (get().loadingIds.includes(model.id)) return;
         const flags = get().flags;
         const failed = { ...get().failed };
         delete failed[model.id];
-        // Pin already-loaded cards AND this loading one before the await, so a
-        // flaky /v1/models snapshot cannot drop orange + sort mid-load.
-        const pinKeys = pinCatalogIds(get().models, get().served, [...get().pinKeys, model.id]);
-        set({ loadingId: model.id, failed, pinKeys });
+        // Pin every in-flight load, not just the latest click. Finishing a
+        // small model must not drop a large one that is still loading.
+        const loadingIds = withLoading(get().loadingIds, model.id);
+        const pinKeys = pinCatalogIds(get().models, get().served, loadingIds);
+        set({ loadingIds, failed, pinKeys });
         try {
           await postLoad({
             engine: model.engine,
@@ -226,18 +260,20 @@ export const useStudio = create<StudioState>()(
           const listed = await listServed(gateway);
           const stillFailed = { ...get().failed };
           delete stillFailed[model.id];
+          const remaining = withoutLoading(get().loadingIds, model.id);
           set({
             served: attachFlags(listed, get().served, { model, flags }),
             gateway,
-            loadingId: null,
+            loadingIds: remaining,
             failed: stillFailed,
-            pinKeys: pinCatalogIds(get().models, listed, [model.id]),
+            pinKeys: pinCatalogIds(get().models, listed, remaining),
           });
         } catch (err) {
+          const remaining = withoutLoading(get().loadingIds, model.id);
           set({
-            loadingId: null,
+            loadingIds: remaining,
             failed: { ...get().failed, [model.id]: err instanceof Error ? err.message : "Serve failed" },
-            pinKeys: get().pinKeys.filter((id) => id !== model.id),
+            pinKeys: pinCatalogIds(get().models, get().served, remaining),
           });
           throw err;
         }
@@ -250,11 +286,13 @@ export const useStudio = create<StudioState>()(
         const listed = await listServed(gateway);
         const failed = { ...get().failed };
         delete failed[model.id];
+        const loadingIds = withoutLoading(get().loadingIds, model.id);
         set({
           served: attachFlags(listed, get().served),
           gateway,
           failed,
-          pinKeys: pinCatalogIds(get().models, listed),
+          loadingIds,
+          pinKeys: pinCatalogIds(get().models, listed, loadingIds),
         });
       },
       reloadServe: async () => {
@@ -263,13 +301,11 @@ export const useStudio = create<StudioState>()(
       syncServed: async () => {
         const { gateway } = await getHealth();
         const listed = await listServed(gateway);
-        const loading = get().loadingId;
+        const loadingIds = get().loadingIds;
         set({
           served: attachFlags(listed, get().served),
           gateway,
-          pinKeys: loading
-            ? pinCatalogIds(get().models, listed, [...get().pinKeys, loading])
-            : pinCatalogIds(get().models, listed),
+          pinKeys: pinCatalogIds(get().models, listed, loadingIds),
         });
       },
     }),
@@ -280,6 +316,7 @@ export const useStudio = create<StudioState>()(
         watchDirs: s.watchDirs,
         selectedId: s.selectedId,
         flagsByModel: s.flagsByModel,
+        engineByModel: s.engineByModel,
         flags: s.flags,
       }),
       merge: (persisted, current) => {
@@ -290,6 +327,7 @@ export const useStudio = create<StudioState>()(
           ...p,
           watchDirs: persistedDirs.length ? persistedDirs : current.watchDirs,
           flagsByModel: p.flagsByModel ?? current.flagsByModel,
+          engineByModel: p.engineByModel ?? current.engineByModel,
           hydrated: false,
         };
       },
@@ -297,6 +335,7 @@ export const useStudio = create<StudioState>()(
         if (!state) return;
         state.watchDirs = migrateWatchDirs(state.watchDirs);
         state.flagsByModel = state.flagsByModel ?? {};
+        state.engineByModel = state.engineByModel ?? {};
         state.flags = mergeFlags(state.flags);
         const next = catalog([], [], state.selectedId);
         state.scanned = [];
@@ -305,7 +344,7 @@ export const useStudio = create<StudioState>()(
         state.selectedId = next.selectedId;
         state.scanning = false;
         state.scanErrors = [];
-        state.loadingId = null;
+        state.loadingIds = [];
         state.pinKeys = [];
         state.failed = {};
         state.hydrated = false;

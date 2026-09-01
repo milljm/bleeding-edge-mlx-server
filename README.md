@@ -102,6 +102,12 @@ Dedicated embedding checkpoints (Qwen3-Embedding, bge, e5, gte, nomic, MiniLM)
 scan as engine `embed` and spawn `mlx_vlm.server --embedding-model PATH` — they
 do not go through mlx-lm, which has no embeddings endpoint.
 
+Scan guesses `lm` / `vlm` / `embed` from the checkpoint. MiniMax-M3
+(`minimax_m3_vl`) looks like a VLM but the working loader is patched mlx-lm
+(`mlx-edge build`). Settings → Engine forces mlx-lm (or mlx-vlm) per model;
+it sticks in `~/.config/mlx-edge/studio.json`. `mlx-edge load --engine lm`
+does the same from the CLI.
+
 ## Hot-load vs LM Studio
 
 Edge **does** keep several models resident: each Serve starts its own

@@ -107,6 +107,7 @@ export async function listServed(gateway: GatewayInfo): Promise<ServedRuntime[]>
 export type StudioPrefs = {
   watchDirs: string[];
   flagsByModel: Record<string, FlagValues>;
+  engineByModel: Partial<Record<string, EngineKind>>;
 };
 
 export async function getPrefs(): Promise<StudioPrefs> {
@@ -115,6 +116,8 @@ export async function getPrefs(): Promise<StudioPrefs> {
   return {
     watchDirs: Array.isArray(body.watchDirs) ? body.watchDirs.map(String) : [],
     flagsByModel: body.flagsByModel && typeof body.flagsByModel === "object" ? body.flagsByModel : {},
+    engineByModel:
+      body.engineByModel && typeof body.engineByModel === "object" ? body.engineByModel : {},
   };
 }
 
@@ -128,6 +131,8 @@ export async function putPrefs(prefs: StudioPrefs): Promise<StudioPrefs> {
   return {
     watchDirs: Array.isArray(body.watchDirs) ? body.watchDirs.map(String) : prefs.watchDirs,
     flagsByModel: body.flagsByModel && typeof body.flagsByModel === "object" ? body.flagsByModel : prefs.flagsByModel,
+    engineByModel:
+      body.engineByModel && typeof body.engineByModel === "object" ? body.engineByModel : prefs.engineByModel,
   };
 }
 
