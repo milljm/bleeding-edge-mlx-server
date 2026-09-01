@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Pause, Play, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clearLogs, getLogs, type LogLevel, type LogLine } from "@/lib/edge-api";
 import { publicName } from "@/lib/models";
@@ -22,19 +22,21 @@ export function LogPanel() {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [stick, setStick] = useState(true);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const needle = model ? publicName(model) : "";
+  pausedRef.current = paused;
 
   useEffect(() => {
     let stop = false;
-    let after = 0;
     const stream = new EventSource("/v1/logs/stream");
     stream.onmessage = (event) => {
+      if (pausedRef.current) return;
       try {
         const body = JSON.parse(event.data) as { seq?: number; lines?: LogLine[] };
         const incoming = body.lines ?? [];
         if (!incoming.length) return;
-        after = Number(body.seq || after);
         setLines((prev) => {
           const seen = new Set(prev.map((row) => row.seq));
           const next = [...prev];
@@ -50,7 +52,6 @@ export function LogPanel() {
     void getLogs()
       .then((snap) => {
         if (stop) return;
-        after = snap.seq;
         setLines(snap.lines);
       })
       .catch(() => undefined);
@@ -61,10 +62,10 @@ export function LogPanel() {
   }, []);
 
   useEffect(() => {
-    if (!stick) return;
+    if (!stick || paused) return;
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [lines, stick, filter]);
+  }, [lines, stick, filter, paused]);
 
   const visible = lines.filter((row) => {
     if (filter === "error") return row.level === "error" || row.level === "warn";
@@ -95,6 +96,16 @@ export function LogPanel() {
         </label>
         <Button
           type="button"
+          variant={paused ? "secondary" : "ghost"}
+          size="sm"
+          onClick={() => setPaused((v) => !v)}
+          aria-pressed={paused}
+        >
+          {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+          {paused ? "Resume" : "Pause"}
+        </Button>
+        <Button
+          type="button"
           variant="ghost"
           size="sm"
           onClick={() => {
@@ -110,6 +121,9 @@ export function LogPanel() {
         ref={scroller}
         className="min-h-0 flex-1 overflow-auto rounded-2xl bg-card px-3 py-3 font-mono text-xs leading-5 shadow-[var(--shadow-border)]"
       >
+        {paused ? (
+          <p className="mb-2 text-xs text-warn">Paused — missed lines are dropped. Resume continues from live.</p>
+        ) : null}
         {visible.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             {served.length

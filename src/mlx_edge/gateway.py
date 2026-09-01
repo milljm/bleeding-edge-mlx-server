@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import socket
 import urllib.error
 import urllib.request
@@ -38,6 +39,14 @@ STATIC_TYPES = {
     ".webp": "image/webp",
     ".txt": "text/plain; charset=utf-8",
 }
+
+# GUI progress/log polls drown the log. Real POST /v1/chat stays visible.
+_QUIET_ACCESS = re.compile(r"\b(?:GET|HEAD) /v1/(?:progress|logs)(?:/|\?|\s)", re.I)
+
+
+def _quiet_access(line: str) -> bool:
+    return bool(_QUIET_ACCESS.search(line))
+
 
 
 def bundled_web_dir() -> Path | None:
@@ -98,8 +107,14 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
 
     class GatewayHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
+            try:
+                rendered = fmt % args
+            except Exception:
+                rendered = str(fmt)
+            if _quiet_access(rendered):
+                return
             sys_stderr = __import__("sys").stderr
-            sys_stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+            sys_stderr.write("%s - %s\n" % (self.address_string(), rendered))
 
         def _cors(self) -> None:
             for key, value in CORS.items():

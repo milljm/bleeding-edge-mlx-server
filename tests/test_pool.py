@@ -1,4 +1,5 @@
 import json
+import time
 import unittest
 from unittest import mock
 
@@ -10,6 +11,22 @@ from mlx_edge.pool import (
     unique_public_id,
     wait_healthy,
 )
+
+
+class DummyProc:
+    stdout = None
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        return None
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        return None
 
 
 class PoolTests(unittest.TestCase):
@@ -111,21 +128,6 @@ class PoolTests(unittest.TestCase):
             recorded["timeout"] = timeout
             return FakeResp()
 
-        class DummyProc:
-            stdout = None
-
-            def poll(self):
-                return None
-
-            def terminate(self):
-                return None
-
-            def wait(self, timeout=None):
-                return 0
-
-            def kill(self):
-                return None
-
         with mock.patch("urllib.request.urlopen", fake_urlopen):
             pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
             item = pool.load("embed", "/models/Qwen3-Embedding-0.6B")
@@ -166,6 +168,45 @@ class PoolTests(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             pool.load("lm", "broken")
         self.assertIn("exited with code 9", str(ctx.exception))
+
+    def test_reheat_coalesces_and_skips_busy(self):
+        with mock.patch("mlx_edge.pool.warmup_engine"), mock.patch.object(ModelPool, "_ensure_warm_worker"):
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
+            chat = pool.load("lm", "/m/MiniMax")
+            other = pool.load("vlm", "/m/Qwen")
+            embed = pool.load("embed", "/m/embed")
+            pool._warm_at.clear()
+            pool._warm_pending.clear()
+            pool._warming.clear()
+            pool.mark_busy(other.public_id, True)
+            for _ in range(8):
+                pool.reheat_others(embed)
+            self.assertEqual(pool._warm_pending, {chat.public_id})
+            self.assertNotIn(other.public_id, pool._warm_pending)
+            self.assertNotIn(embed.public_id, pool._warm_pending)
+
+    def test_reheat_cooldown_skips_recent(self):
+        with mock.patch("mlx_edge.pool.warmup_engine"), mock.patch.object(ModelPool, "_ensure_warm_worker"):
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
+            chat = pool.load("lm", "/m/MiniMax")
+            embed = pool.load("embed", "/m/embed")
+            pool._warm_pending.clear()
+            pool._warming.clear()
+            pool._warm_at[chat.public_id] = time.time()
+            pool.reheat_others(embed)
+            self.assertNotIn(chat.public_id, pool._warm_pending)
+
+    def test_mark_busy_false_sets_cooldown(self):
+        with mock.patch("mlx_edge.pool.warmup_engine"), mock.patch.object(ModelPool, "_ensure_warm_worker"):
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
+            chat = pool.load("lm", "/m/MiniMax")
+            embed = pool.load("embed", "/m/embed")
+            pool._warm_at.clear()
+            pool._warm_pending.clear()
+            pool.mark_busy(chat.public_id, True)
+            pool.mark_busy(chat.public_id, False)
+            pool.reheat_others(embed)
+            self.assertNotIn(chat.public_id, pool._warm_pending)
 
 
 if __name__ == "__main__":

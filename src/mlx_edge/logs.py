@@ -16,6 +16,21 @@ LEVEL_PROGRESS = re.compile(
 )
 LEVEL_HTTP = re.compile(r"\b(GET|POST|PUT|DELETE|PATCH|OPTIONS)\b.*\bHTTP/\d")
 
+# Keep-hot embed "ok" and chat warmup "hi" (chat template → 9 tokens).
+_RE_CACHE = re.compile(r"^Prompt Cache:", re.I)
+_RE_CACHE_ROW = re.compile(r"^-\s+(assistant|user|system):", re.I)
+_RE_LOOPBACK_HTTP = re.compile(
+    r"(?:^INFO:\s+)?127\.0\.0\.1(?::\d+)?\s+.*\b(?:GET|POST|PUT|DELETE|PATCH)\b",
+    re.I,
+)
+_RE_TINY_PREFILL = re.compile(r"Prompt processing progress:\s*(\d+)\s*/\s*(\d+)", re.I)
+_RE_MAX_TOKENS_1 = re.compile(r"\bmax_tokens=1\b")
+_RE_EMBED_KEEP_HOT = re.compile(r"\bprompt_tokens=3\b", re.I)
+_RE_CHAT_WARM = re.compile(r"\bprompt_tokens=9\b", re.I)
+_RE_ONE_TOKEN_CAP = re.compile(r"\bgenerated_tokens=1\b.*\bfinish_reason=length\b", re.I)
+_RE_PREFILL_NINE = re.compile(r"Prefill (?:started|progress|completed):.*(?:prompt_tokens=9|tokens=\d+/9\b)", re.I)
+_RE_GUI_POLL = re.compile(r"\bGET /v1/(?:progress|logs)(?:/|\?|\s)", re.I)
+
 
 def classify(text: str) -> str:
     if LEVEL_ERROR.search(text):
@@ -29,6 +44,33 @@ def classify(text: str) -> str:
     return "info"
 
 
+def is_noise(text: str) -> bool:
+    """Drop keep-hot / warmup / cache chatter. Real client HTTP is kept."""
+    line = text.strip()
+    if not line:
+        return True
+    if _RE_CACHE.match(line) or _RE_CACHE_ROW.match(line):
+        return True
+    if _RE_LOOPBACK_HTTP.search(line):
+        return True
+    if _RE_GUI_POLL.search(line):
+        return True
+    tiny = _RE_TINY_PREFILL.search(line)
+    if tiny and int(tiny.group(2)) <= 1:
+        return True
+    if _RE_MAX_TOKENS_1.search(line):
+        return True
+    if _RE_CHAT_WARM.search(line):
+        return True
+    if _RE_EMBED_KEEP_HOT.search(line) and "embed" in line.lower():
+        return True
+    if _RE_ONE_TOKEN_CAP.search(line):
+        return True
+    if _RE_PREFILL_NINE.search(line):
+        return True
+    return False
+
+
 class LogBuffer:
     def __init__(self, maxlen: int = 3000) -> None:
         self._lock = threading.RLock()
@@ -38,7 +80,7 @@ class LogBuffer:
 
     def append(self, model: str, engine: str, text: str) -> None:
         line = text.rstrip("\n")
-        if not line:
+        if not line or is_noise(line):
             return
         row = {
             "seq": 0,

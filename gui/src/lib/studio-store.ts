@@ -35,6 +35,7 @@ type StudioState = {
   scanning: boolean;
   scanErrors: ScanError[];
   loadingId: string | null;
+  pinKeys: string[];
   failed: Record<string, string>;
   hydrated: boolean;
   progress: ProgressSnapshot | null;
@@ -49,7 +50,7 @@ type StudioState = {
   applyPrefs: (prefs: { watchDirs?: string[]; flagsByModel?: Record<string, FlagValues> }) => void;
   persistPrefs: () => Promise<void>;
   scanWatchDirs: () => Promise<void>;
-  startServe: (opts?: { stay?: boolean }) => Promise<void>;
+  startServe: () => Promise<void>;
   stopServe: () => Promise<void>;
   reloadServe: () => Promise<void>;
   syncServed: () => Promise<void>;
@@ -79,6 +80,22 @@ function attachFlags(next: ServedRuntime[], prev: ServedRuntime[], justLoaded?: 
   });
 }
 
+/** Catalog ids that should stay orange + sorted: currently live, plus any extras (loading). */
+export function pinCatalogIds(
+  models: ModelRec[],
+  served: ServedRuntime[],
+  extra: (string | null | undefined)[] = [],
+): string[] {
+  const pins = new Set<string>();
+  for (const model of models) {
+    if (modelIsLive(served, model)) pins.add(model.id);
+  }
+  for (const id of extra) {
+    if (id) pins.add(id);
+  }
+  return [...pins];
+}
+
 export const useStudio = create<StudioState>()(
   persist(
     (set, get) => ({
@@ -96,6 +113,7 @@ export const useStudio = create<StudioState>()(
       scanning: false,
       scanErrors: [],
       loadingId: null,
+      pinKeys: [],
       failed: {},
       hydrated: false,
       progress: null,
@@ -188,13 +206,16 @@ export const useStudio = create<StudioState>()(
           });
         }
       },
-      startServe: async (opts) => {
+      startServe: async () => {
         const model = get().selected();
         if (!model) return;
         const flags = get().flags;
         const failed = { ...get().failed };
         delete failed[model.id];
-        set({ loadingId: model.id, failed });
+        // Pin already-loaded cards AND this loading one before the await, so a
+        // flaky /v1/models snapshot cannot drop orange + sort mid-load.
+        const pinKeys = pinCatalogIds(get().models, get().served, [...get().pinKeys, model.id]);
+        set({ loadingId: model.id, failed, pinKeys });
         try {
           await postLoad({
             engine: model.engine,
@@ -210,12 +231,13 @@ export const useStudio = create<StudioState>()(
             gateway,
             loadingId: null,
             failed: stillFailed,
-            tab: opts?.stay ? get().tab : model.engine === "embed" ? "endpoint" : "playground",
+            pinKeys: pinCatalogIds(get().models, listed, [model.id]),
           });
         } catch (err) {
           set({
             loadingId: null,
             failed: { ...get().failed, [model.id]: err instanceof Error ? err.message : "Serve failed" },
+            pinKeys: get().pinKeys.filter((id) => id !== model.id),
           });
           throw err;
         }
@@ -228,15 +250,27 @@ export const useStudio = create<StudioState>()(
         const listed = await listServed(gateway);
         const failed = { ...get().failed };
         delete failed[model.id];
-        set({ served: attachFlags(listed, get().served), gateway, failed });
+        set({
+          served: attachFlags(listed, get().served),
+          gateway,
+          failed,
+          pinKeys: pinCatalogIds(get().models, listed),
+        });
       },
       reloadServe: async () => {
-        await get().startServe({ stay: true });
+        await get().startServe();
       },
       syncServed: async () => {
         const { gateway } = await getHealth();
         const listed = await listServed(gateway);
-        set({ served: attachFlags(listed, get().served), gateway });
+        const loading = get().loadingId;
+        set({
+          served: attachFlags(listed, get().served),
+          gateway,
+          pinKeys: loading
+            ? pinCatalogIds(get().models, listed, [...get().pinKeys, loading])
+            : pinCatalogIds(get().models, listed),
+        });
       },
     }),
     {
@@ -272,6 +306,7 @@ export const useStudio = create<StudioState>()(
         state.scanning = false;
         state.scanErrors = [];
         state.loadingId = null;
+        state.pinKeys = [];
         state.failed = {};
         state.hydrated = false;
       },

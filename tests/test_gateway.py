@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-from mlx_edge.gateway import make_handler
+from mlx_edge.gateway import _quiet_access, make_handler
 from mlx_edge.pool import ModelPool, free_port, strip_bind_args
 
 
@@ -640,6 +640,12 @@ class GatewayTests(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
 
+    def test_quiet_progress_polls(self):
+        self.assertTrue(_quiet_access('"GET /v1/progress HTTP/1.1" 200 -'))
+        self.assertTrue(_quiet_access('"GET /v1/progress?model=MiniMax-M2.7-8bit HTTP/1.1" 200 -'))
+        self.assertTrue(_quiet_access('"GET /v1/logs/stream HTTP/1.1" 200 -'))
+        self.assertFalse(_quiet_access('"POST /v1/chat/completions HTTP/1.1" 200 -'))
+        self.assertFalse(_quiet_access('"POST /v1/embeddings HTTP/1.1" 200 -'))
 
 
 if __name__ == "__main__":

@@ -26,7 +26,6 @@ export function FlagPanel() {
   const setFlag = useStudio((s) => s.setFlag);
   const resetFlags = useStudio((s) => s.resetFlags);
   const reloadServe = useStudio((s) => s.reloadServe);
-  const [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(false);
 
   if (!model) {
@@ -103,20 +102,12 @@ export function FlagPanel() {
           </section>
         );
       })}
-      <div>
-        <button
-          type="button"
-          className="text-xs font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
-          onClick={() => setAdvanced((v) => !v)}
-        >
-          {advanced ? "Hide advanced" : "Show advanced"}
-        </button>
-        {advanced ? (
-          <div className="mt-4">
-            <FlagGrid defs={extra} values={flags} onChange={setFlag} />
-          </div>
-        ) : null}
-      </div>
+      {extra.length ? (
+        <section className="space-y-4">
+          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Advanced</h3>
+          <FlagGrid defs={extra} values={flags} onChange={setFlag} />
+        </section>
+      ) : null}
     </div>
   );
 }
