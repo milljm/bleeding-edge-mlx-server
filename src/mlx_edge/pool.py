@@ -18,6 +18,7 @@ from typing import Callable
 from mlx_edge.engines import get_engine
 from mlx_edge.logs import LogBuffer
 from mlx_edge.progress import ProgressTracker
+from mlx_edge.scan import context_window
 from mlx_edge.templates import template_for_spawn
 
 # After a real request the graphs are hot. Don't immediately 1-token-warm them.
@@ -155,20 +156,46 @@ class LoadedModel:
     proc: subprocess.Popen[bytes] | None = None
     args: list[str] = field(default_factory=list)
     public_id: str = ""
+    context: int | None = None
 
     def __post_init__(self) -> None:
         if not self.public_id:
             self.public_id = basename_id(self.model)
         if self.id == self.model:
             self.id = self.public_id
+        if self.context is None:
+            self.context = context_window(self.model)
 
     def as_openai(self) -> dict[str, object]:
-        return {
+        row: dict[str, object] = {
             "id": self.public_id,
             "object": "model",
             "created": int(self.started_at),
             "owned_by": owned_by(self.engine),
         }
+        if self.context and self.context > 0:
+            n = int(self.context)
+            # OpenRouter / Cline OpenAI-compat, vLLM, LM Studio native.
+            row["context_length"] = n
+            row["max_model_len"] = n
+            row["max_context_length"] = n
+        return row
+
+    def as_lmstudio(self) -> dict[str, object]:
+        kind = {"lm": "llm", "vlm": "vlm", "embed": "embeddings"}.get(self.engine, "llm")
+        row: dict[str, object] = {
+            "id": self.public_id,
+            "object": "model",
+            "type": kind,
+            "publisher": owned_by(self.engine),
+            "arch": self.engine,
+            "state": "loaded",
+        }
+        if self.context and self.context > 0:
+            n = int(self.context)
+            row["max_context_length"] = n
+            row["loaded_context_length"] = n
+        return row
 
 
 SpawnFn = Callable[[str, str, int, list[str]], subprocess.Popen[bytes] | None]

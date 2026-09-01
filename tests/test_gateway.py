@@ -648,6 +648,44 @@ class GatewayTests(unittest.TestCase):
         self.assertFalse(_quiet_access('"POST /v1/chat/completions HTTP/1.1" 200 -'))
         self.assertFalse(_quiet_access('"POST /v1/embeddings HTTP/1.1" 200 -'))
 
+    def test_models_list_and_retrieve_include_context(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from mlx_edge.pool import LoadedModel
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "Qwen3-8B-4bit"
+            path.mkdir()
+            (path / "config.json").write_text(
+                '{"model_type":"qwen3","max_position_embeddings":40960}',
+                encoding="utf-8",
+            )
+            item = LoadedModel(
+                id="Qwen3-8B-4bit",
+                engine="lm",
+                model=str(path),
+                port=1,
+                started_at=0.0,
+                public_id="Qwen3-8B-4bit",
+            )
+            self.pool._models[item.id] = item
+            status, body = self._json("GET", "/v1/models")
+            self.assertEqual(status, 200)
+            row = body["data"][0]
+            self.assertEqual(row["id"], "Qwen3-8B-4bit")
+            self.assertEqual(row["context_length"], 40960)
+            self.assertEqual(row["max_model_len"], 40960)
+            status, one = self._json("GET", "/v1/models/qwen3-8b-4bit")
+            self.assertEqual(status, 200)
+            self.assertEqual(one["max_context_length"], 40960)
+            status, missing = self._json("GET", "/v1/models/not-loaded")
+            self.assertEqual(status, 404)
+            status, native = self._json("GET", "/api/v0/models")
+            self.assertEqual(status, 200)
+            self.assertEqual(native["data"][0]["type"], "llm")
+            self.assertEqual(native["data"][0]["loaded_context_length"], 40960)
+
     def test_stop_aborts_stream_and_clears_progress(self):
         from http.server import BaseHTTPRequestHandler
 

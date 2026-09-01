@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mlx_edge.scan import list_models, scan_dirs, slug_model_id
+from mlx_edge.scan import context_window, list_models, scan_dirs, slug_model_id
 
 
 def _write_model(path: Path, *, vision: bool = False, bits: int | None = 4, nbytes: int = 2048) -> None:
@@ -75,6 +75,8 @@ class ScanTests(unittest.TestCase):
             models = list_models(str(root))
             self.assertEqual(models[0]["context"], 32768)
             self.assertFalse(models[0]["hasChatTemplate"])
+            self.assertEqual(context_window(path), 32768)
+            self.assertIsNone(context_window(path / "missing"))
 
     def test_detects_chat_template(self):
         with tempfile.TemporaryDirectory() as tmp:

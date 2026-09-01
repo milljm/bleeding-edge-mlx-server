@@ -179,6 +179,27 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 data = [item.as_openai() for item in pool.list()]
                 self._json({"object": "list", "data": data})
                 return
+            if path.startswith("/v1/models/"):
+                name = unquote(path[len("/v1/models/") :]).strip("/")
+                if name and name not in {"load", "unload", "scan"}:
+                    item = pool.resolve(name)
+                    if item is None:
+                        self._json(
+                            {
+                                "error": {
+                                    "message": f"{name} is not loaded",
+                                    "type": "invalid_request_error",
+                                    "code": "model_not_found",
+                                }
+                            },
+                            404,
+                        )
+                        return
+                    self._json(item.as_openai())
+                    return
+            if path in {"/api/v0/models", "/api/v1/models"}:
+                self._json({"object": "list", "data": [item.as_lmstudio() for item in pool.list()]})
+                return
             if path in {"/v1/prefs", "/v1/studio"}:
                 from mlx_edge.prefs import load_prefs
 

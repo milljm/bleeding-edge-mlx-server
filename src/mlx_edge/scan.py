@@ -326,6 +326,15 @@ def _infer_context(cfg: dict[str, Any], depth: int = 0) -> int | None:
     return None
 
 
+def context_window(model: str | Path) -> int | None:
+    """Read the checkpoint's context window from config.json, if present."""
+    path = Path(str(model))
+    cfg = path / "config.json"
+    if not cfg.is_file():
+        return None
+    return _infer_context(_read_config(cfg))
+
+
 def _infer_quant(cfg: dict[str, Any], path: Path, repo: str) -> str:
     quant = cfg.get("quantization") or cfg.get("quantization_config") or {}
     if isinstance(quant, dict):

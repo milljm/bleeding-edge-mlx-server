@@ -91,6 +91,33 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(row["id"], "vision")
         self.assertEqual(row["owned_by"], "mlx-vlm")
         self.assertEqual(row["object"], "model")
+        self.assertNotIn("context_length", row)
+
+    def test_openai_exposes_context_window(self):
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        import json
+
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "MiniMax-M2.7-ConfigI-MLX"
+            path.mkdir()
+            (path / "config.json").write_text(
+                json.dumps({"model_type": "qwen3", "max_position_embeddings": 196608}),
+                encoding="utf-8",
+            )
+            (path / "model.safetensors").write_bytes(b"w")
+            pool = self._pool()
+            item = pool.load("lm", str(path))
+            self.assertEqual(item.context, 196608)
+            row = item.as_openai()
+            self.assertEqual(row["context_length"], 196608)
+            self.assertEqual(row["max_model_len"], 196608)
+            self.assertEqual(row["max_context_length"], 196608)
+            native = item.as_lmstudio()
+            self.assertEqual(native["type"], "llm")
+            self.assertEqual(native["state"], "loaded")
+            self.assertEqual(native["max_context_length"], 196608)
+            self.assertEqual(native["loaded_context_length"], 196608)
 
     def test_lm_server_argv_not_deprecated_module(self):
         argv = server_argv("lm")
