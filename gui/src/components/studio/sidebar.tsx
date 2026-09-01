@@ -22,7 +22,7 @@ export function Sidebar({
   const dirDraft = useStudio((s) => s.dirDraft);
   const scanning = useStudio((s) => s.scanning);
   const scanErrors = useStudio((s) => s.scanErrors);
-  const loadingId = useStudio((s) => s.loadingId);
+  const loadingIds = useStudio((s) => s.loadingIds);
   const pinKeys = useStudio((s) => s.pinKeys);
   const failed = useStudio((s) => s.failed);
   const progress = useStudio((s) => s.progress);
@@ -45,8 +45,8 @@ export function Sidebar({
             m.engine.includes(q),
         )
       : models;
-    return sortLoadedFirst(list, (m) => modelIsLive(served, m) || loadingId === m.id || pinKeys.includes(m.id));
-  }, [models, query, served, loadingId, pinKeys]);
+    return sortLoadedFirst(list, (m) => modelIsLive(served, m) || loadingIds.includes(m.id) || pinKeys.includes(m.id));
+  }, [models, query, served, loadingIds, pinKeys]);
 
   function submitDir(e: FormEvent) {
     e.preventDefault();
@@ -156,7 +156,7 @@ export function Sidebar({
                 const active = model.id === selectedId;
                 const live = modelIsLive(served, model);
                 const error = failed[model.id];
-                const loading = loadingId === model.id;
+                const loading = loadingIds.includes(model.id);
                 const busy = modelIsBusy(progress, model);
                 const inUse = live || loading || pinKeys.includes(model.id);
                 const context = formatContext(model.context);

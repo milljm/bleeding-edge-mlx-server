@@ -6,6 +6,8 @@ export type ModelRec = {
   repo: string;
   path: string;
   engine: EngineKind;
+  /** Scan guess, before a per-model Engine override. */
+  detectedEngine?: EngineKind;
   size: string;
   quant: string;
   context?: number | null;
@@ -43,6 +45,17 @@ export function formatContext(n?: number | null) {
 
 export function flagKey(model: Pick<ModelRec, "repo" | "id" | "path">) {
   return model.repo || model.id || model.path;
+}
+
+export function applyEngineOverrides(
+  models: ModelRec[],
+  engineByModel: Partial<Record<string, EngineKind>> = {},
+): ModelRec[] {
+  return models.map((model) => {
+    const detected = model.detectedEngine ?? model.engine;
+    const override = engineByModel[flagKey(model)];
+    return { ...model, detectedEngine: detected, engine: override ?? detected };
+  });
 }
 
 export function modelFromRepo(repo: string, engine: EngineKind, watchDir: string): ModelRec | null {

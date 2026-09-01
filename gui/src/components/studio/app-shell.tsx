@@ -35,13 +35,13 @@ export function AppShell() {
   const startServe = useStudio((s) => s.startServe);
   const stopServe = useStudio((s) => s.stopServe);
   const reloadServe = useStudio((s) => s.reloadServe);
-  const loadingId = useStudio((s) => s.loadingId);
+  const loadingIds = useStudio((s) => s.loadingIds);
   const failed = useStudio((s) => s.failed);
 
   const live = modelIsLive(served, model);
   const loaded = served.find((row) => modelIsLive([row], model));
   const dirty = Boolean(live && model && flagsDirty(model.engine, flags, loaded?.flags));
-  const loadingThis = Boolean(model && loadingId === model.id);
+  const loadingThis = Boolean(model && loadingIds.includes(model.id));
   const failedThis = model ? failed[model.id] : undefined;
 
   async function onServe() {

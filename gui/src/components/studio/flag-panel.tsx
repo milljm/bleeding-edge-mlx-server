@@ -8,9 +8,10 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { engineLabel } from "@/lib/command";
 import { fetchTemplate, modelIsLive } from "@/lib/edge-api";
-import { flagsDirty, flagsFor, type FlagDef, type FlagGroup } from "@/lib/flags";
-import { formatContext, loadTarget } from "@/lib/models";
+import { flagsDirty, flagsFor, type EngineKind, type FlagDef, type FlagGroup } from "@/lib/flags";
+import { flagKey, formatContext, loadTarget } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
+import { cn } from "@/lib/utils";
 
 const GROUP_LABEL: Record<FlagGroup, string> = {
   server: "Server",
@@ -89,6 +90,7 @@ export function FlagPanel() {
           Keep a chat model loaded too — RAG does not unload it.
         </p>
       ) : null}
+      <EngineCard />
       {model.engine !== "embed" ? <TemplateCard /> : null}
       {groups.map((group) => {
         const defs = visible.filter((d) => (d.group ?? "server") === group);
@@ -109,6 +111,61 @@ export function FlagPanel() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+function EngineCard() {
+  const model = useStudio((s) => s.selected());
+  const engineByModel = useStudio((s) => s.engineByModel);
+  const setEngineOverride = useStudio((s) => s.setEngineOverride);
+  const served = useStudio((s) => s.served);
+
+  if (!model) return null;
+  const detected = model.detectedEngine ?? model.engine;
+  const override = engineByModel[flagKey(model)];
+  const live = modelIsLive(served, model);
+  const options: { value: EngineKind | null; label: string }[] = [
+    { value: null, label: `Auto (${engineLabel(detected)})` },
+    { value: "lm", label: "mlx-lm" },
+    { value: "vlm", label: "mlx-vlm" },
+    { value: "embed", label: "embed" },
+  ];
+
+  return (
+    <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
+      <div>
+        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Engine</h3>
+        <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+          Scan guessed {engineLabel(detected)} from the checkpoint. Force mlx-lm when a model looks
+          multimodal but the working loader is a patched mlx-lm — MiniMax-M3-ConfigI is{" "}
+          <span className="font-mono text-foreground">minimax_m3_vl</span> with a vision tower mlx-lm
+          ignores. Overlay that class with <span className="font-mono text-foreground">mlx-edge build --help</span>.
+          {live ? " Reload after changing a loaded model." : " Serve after you pick."}
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Engine">
+        {options.map((opt) => {
+          const selected = opt.value === null ? !override : override === opt.value;
+          return (
+            <button
+              key={opt.label}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              className={cn(
+                "h-9 rounded-lg px-3 text-sm font-medium transition-colors",
+                selected
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setEngineOverride(opt.value)}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
