@@ -154,6 +154,15 @@ export async function postUnload(model: string) {
   return parseJson(res);
 }
 
+export async function postStop(model?: string) {
+  const res = await fetch("/v1/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(model ? { model } : {}),
+  });
+  return parseJson(res);
+}
+
 export type ScanError = { dir: string; message: string };
 
 export async function postScan(dirs: string[]): Promise<{ models: ModelRec[]; errors: ScanError[] }> {
