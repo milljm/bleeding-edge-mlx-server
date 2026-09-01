@@ -104,6 +104,7 @@ def idle_row(model_id: str, engine: str) -> dict[str, Any]:
         "prompt": empty_prompt(),
         "generation": empty_generation(),
         "error": None,
+        "in_flight": 0,
     }
 
 
@@ -216,7 +217,10 @@ class ProgressTracker:
         at = now()
         with self._cv:
             self._cancel_timer(model_id)
+            prev = self._models.get(model_id)
+            inflight = int((prev or {}).get("in_flight") or 0) + 1
             row = idle_row(model_id, engine)
+            row["in_flight"] = inflight
             row["phase"] = "prefill"
             row["status"] = "processing"
             row["stream"] = bool(stream) if stream is not None else None
@@ -253,9 +257,11 @@ class ProgressTracker:
         at = now()
         with self._cv:
             row = self._models.get(model_id)
-            if row is None:
-                row = idle_row(model_id, engine)
-                self._models[model_id] = row
+            if row is None or not row.get("in_flight"):
+                # Keep-hot / warmup hits the child directly. Those logs must
+                # not look like a user generation (stuck "generating" / green
+                # embed dot).
+                return
             row["engine"] = engine or row.get("engine") or "lm"
             prompt = row["prompt"]
             gen = row["generation"]
@@ -342,6 +348,9 @@ class ProgressTracker:
             row = self._models.get(model_id)
             if not row:
                 return
+            row["in_flight"] = max(0, int(row.get("in_flight") or 0) - 1)
+            if row["in_flight"] > 0:
+                return
             self._mark_done(row, now())
             self._schedule_idle(model_id)
             self._bump()
@@ -351,6 +360,7 @@ class ProgressTracker:
             row = self._models.get(model_id)
             if not row:
                 return
+            row["in_flight"] = 0
             row["phase"] = "error"
             row["status"] = "error"
             row["error"] = message

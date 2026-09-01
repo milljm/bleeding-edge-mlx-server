@@ -67,6 +67,25 @@ class ProgressTests(unittest.TestCase):
         snap = tracker.snapshot()
         self.assertEqual(snap["models"][0]["phase"], "idle")
 
+    def test_warmup_logs_do_not_mark_processing(self):
+        tracker = ProgressTracker(linger=0)
+        tracker.ensure("Qwen3-Embedding-0.6B-4bit", "embed")
+        tracker.ingest_log("Qwen3-Embedding-0.6B-4bit", "embed", "Prompt processing progress: 8/8")
+        snap = tracker.snapshot()
+        self.assertFalse(snap["active"])
+        self.assertEqual(snap["models"][0]["phase"], "idle")
+
+    def test_logs_after_complete_do_not_stick(self):
+        tracker = ProgressTracker(linger=0)
+        tracker.begin("m", "lm", stream=True)
+        tracker.ingest_log("m", "lm", "Prompt processing progress: 10/10")
+        self.assertTrue(tracker.snapshot()["active"])
+        tracker.complete("m")
+        tracker.ingest_log("m", "lm", "Prompt processing progress: 10/10")
+        snap = tracker.snapshot()
+        self.assertFalse(snap["active"])
+        self.assertEqual(snap["models"][0]["phase"], "idle")
+
 
 if __name__ == "__main__":
     unittest.main()

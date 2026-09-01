@@ -99,10 +99,13 @@ class HarmonyFilter:
         reasoning_s = "".join(reasoning)
         confirmed = self.seen_think or self.seen_channel
         if self.assume and not confirmed:
-            self.held += content_s + reasoning_s
-            return "", ""
+            # Stream thinking live as reasoning; remember it so flush can
+            # promote to content if MiniMax never emits a closer.
+            blob = content_s + reasoning_s
+            self.held += blob
+            return "", blob
         if self.held:
-            reasoning_s = self.held + reasoning_s
+            # Already streamed as reasoning — do not re-emit on the switch.
             self.held = ""
         return content_s, reasoning_s
 
@@ -173,7 +176,10 @@ def filter_text(text: str, assume_analysis: bool = False) -> tuple[str, str]:
     filt = HarmonyFilter(assume_analysis=assume_analysis)
     content, reasoning = filt.push(text)
     more_c, more_r = filt.flush()
-    return content + more_c, reasoning + more_r
+    content, reasoning = content + more_c, reasoning + more_r
+    if assume_analysis and not filt.seen_think and not filt.seen_channel:
+        return (content or reasoning), ""
+    return content, reasoning
 
 
 def looks_like_harmony(text: str) -> bool:

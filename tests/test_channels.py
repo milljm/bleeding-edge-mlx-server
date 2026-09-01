@@ -119,6 +119,8 @@ class ChannelTests(unittest.TestCase):
     def test_stream_think_then_answer(self):
         filt = HarmonyFilter(assume_analysis=True)
         c1, r1 = filt.push("thinking about stocks")
+        self.assertEqual(c1, "")
+        self.assertIn("thinking", r1)
         c2, r2 = filt.push("</think>\nApple is at $1.")
         c3, r3 = filt.flush()
         self.assertEqual((c1 + c2 + c3).strip(), "Apple is at $1.")
@@ -128,7 +130,7 @@ class ChannelTests(unittest.TestCase):
         filt = HarmonyFilter(assume_analysis=True)
         c1, r1 = filt.push("plan </th")
         self.assertEqual(c1, "")
-        self.assertEqual(r1, "")
+        self.assertIn("plan", r1)
         c2, r2 = filt.push("ink>\nDone.")
         c3, r3 = filt.flush()
         self.assertEqual((c1 + c2 + c3).strip(), "Done.")

@@ -3,7 +3,7 @@ import { ChevronRight, Folder, PanelLeft, Plus, RefreshCw, Search, Trash2 } from
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatContext, DIR_PLACEHOLDER } from "@/lib/models";
+import { formatContext, DIR_PLACEHOLDER, sortLoadedFirst } from "@/lib/models";
 import { modelIsBusy, modelIsLive } from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,7 @@ export function Sidebar({
   const scanning = useStudio((s) => s.scanning);
   const scanErrors = useStudio((s) => s.scanErrors);
   const loadingId = useStudio((s) => s.loadingId);
+  const pinKeys = useStudio((s) => s.pinKeys);
   const failed = useStudio((s) => s.failed);
   const progress = useStudio((s) => s.progress);
   const addWatchDir = useStudio((s) => s.addWatchDir);
@@ -44,8 +45,8 @@ export function Sidebar({
             m.engine.includes(q),
         )
       : models;
-    return sortLoadedFirst(list, (m) => modelIsLive(served, m) || loadingId === m.id);
-  }, [models, query, served, loadingId]);
+    return sortLoadedFirst(list, (m) => modelIsLive(served, m) || loadingId === m.id || pinKeys.includes(m.id));
+  }, [models, query, served, loadingId, pinKeys]);
 
   function submitDir(e: FormEvent) {
     e.preventDefault();
@@ -157,6 +158,7 @@ export function Sidebar({
                 const error = failed[model.id];
                 const loading = loadingId === model.id;
                 const busy = modelIsBusy(progress, model);
+                const inUse = live || loading || pinKeys.includes(model.id);
                 const context = formatContext(model.context);
                 return (
                   <li key={model.id}>
@@ -180,9 +182,9 @@ export function Sidebar({
                           busy
                             ? "busy-dot"
                             : loading
-                              ? "animate-pulse bg-primary"
+                              ? "animate-pulse bg-hot"
                               : live
-                                ? "bg-ok"
+                                ? "bg-hot"
                                 : error
                                   ? "bg-destructive"
                                   : "bg-border",

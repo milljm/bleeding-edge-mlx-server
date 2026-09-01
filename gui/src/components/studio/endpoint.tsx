@@ -22,17 +22,12 @@ export function EndpointPanel() {
       <div>
         <h2 className="text-lg font-medium tracking-tight">OpenAI endpoint</h2>
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-          Point a client at <span className="font-mono font-medium text-foreground">{base}</span>. One
-          gateway, many hot-loaded models — pass the basename as <span className="font-mono">model</span>
-          (not the full disk path). Chat uses <span className="font-mono">stream: true</span>. Embeddings
-          use <span className="font-mono">POST /v1/embeddings</span> on a separate loaded process, so RAG
-          does not stall a chat model that is already up. Prompt-processing progress is a float{" "}
-          <span className="font-mono">0.0–1.0</span> on <span className="font-mono">GET /v1/progress</span>{" "}
-          (and SSE <span className="font-mono">/v1/progress/stream</span>). Edge strips Harmony{" "}
-          <span className="font-mono">{"<|channel|>"}</span> tokens and MiniMax{" "}
-          <span className="font-mono">{"<think>"}</span> / <span className="font-mono">{"<mm:think>"}</span>{" "}
-          blocks from chat content. Bind with{" "}
-          <span className="font-mono">edge-gui --host 0.0.0.0</span> for remote clients.
+          Point a client at <span className="font-mono font-medium text-foreground">{base}</span>.
+          Pass the basename as <span className="font-mono">model</span>. Request{" "}
+          <span className="font-mono">temperature</span>, <span className="font-mono">top_p</span>,{" "}
+          <span className="font-mono">top_k</span>, and <span className="font-mono">min_p</span> override
+          the spawn defaults. Bind with <span className="font-mono">edge-gui --host 0.0.0.0</span> for
+          remote clients.
         </p>
       </div>
       {served.length ? (
@@ -63,29 +58,9 @@ export function EndpointPanel() {
       )}
       <CopyBlock label="list models" code={`curl ${base}/models`} />
       <CopyBlock
-        label="processing progress (0.0–1.0)"
-        code={`# snapshot — models[].progress and top-level progress are floats 0.0–1.0
-curl ${base.replace(/\/v1$/, "")}/v1/progress
-curl ${base.replace(/\/v1$/, "")}/v1/progress?model=${id}
-
-# live SSE (EventSource in a browser, or curl -N)
-curl -N ${base.replace(/\/v1$/, "")}/v1/progress/stream`}
-      />
-      <CopyBlock
-        label="progress from another app"
-        code={`const es = new EventSource("${base.replace(/\/v1$/, "")}/v1/progress/stream");
-es.onmessage = (ev) => {
-  const snap = JSON.parse(ev.data);
-  // snap.progress → 0.0 idle / unknown, 1.0 prefill done (decode)
-  const row = snap.models.find((m) => m.id === "${id}") || snap.models[0];
-  const p = row?.progress ?? snap.progress; // 0.0 .. 1.0
-};`}
-      />
-      <CopyBlock
-        label="engine logs (SSE)"
-        code={`curl -N ${base.replace(/\/v1$/, "")}/v1/logs/stream
-const logs = new EventSource("${base.replace(/\/v1$/, "")}/v1/logs/stream");
-logs.onmessage = (ev) => console.log(JSON.parse(ev.data).lines);`}
+        label="processing progress"
+        code={`curl ${base.replace(/\/v1$/, "")}/v1/progress
+curl ${base.replace(/\/v1$/, "")}/v1/progress?model=${id}`}
       />
     </div>
   );

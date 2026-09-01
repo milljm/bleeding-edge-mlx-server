@@ -197,12 +197,8 @@ function ChatPlayground({ live }: { live: boolean }) {
                 const piece = deltaContent(payload);
                 const think = deltaReasoning(payload);
                 if (think) reasoning += think;
-                if (piece) {
-                  assistant += piece;
-                  paint(assistant);
-                } else if (think && !assistant) {
-                  paint("");
-                }
+                if (piece) assistant += piece;
+                if (piece || think) paint(assistant || reasoning);
               } catch {
                 /* ignore malformed chunk */
               }
