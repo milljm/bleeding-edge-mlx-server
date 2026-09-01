@@ -141,6 +141,24 @@ class ChannelTests(unittest.TestCase):
         self.assertEqual((c1 + c2 + c3).strip(), "Apple is at $1.")
         self.assertIn("thinking", r1 + r2 + r3)
 
+    def test_minimax_think_still_streams_when_thinking_mentions_tools(self):
+        filt = HarmonyFilter(assume_analysis=True, parse_tools=True)
+        c1, r1 = filt.push("maybe <minimax:tool_call> later")
+        self.assertEqual(c1, "")
+        self.assertIn("maybe", r1)
+        c2, r2 = filt.push("</think>\nHello from MiniMax.")
+        c3, r3 = filt.flush()
+        self.assertEqual((c2 + c3).strip(), "Hello from MiniMax.")
+
+    def test_minimax_answer_streams_without_tool_hold(self):
+        filt = HarmonyFilter(assume_analysis=True, parse_tools=False)
+        pieces = []
+        for token in ["plan", "</think>\n", "Hel", "lo world"]:
+            c, r = filt.push(token)
+            pieces.append(c)
+        more, _ = filt.flush()
+        self.assertEqual(("".join(pieces) + more).strip(), "Hello world")
+
     def test_split_think_close(self):
         filt = HarmonyFilter(assume_analysis=True)
         c1, r1 = filt.push("plan </th")

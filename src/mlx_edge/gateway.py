@@ -103,6 +103,28 @@ def wants_stream(body: dict[str, Any]) -> bool:
     return False
 
 
+def request_has_tools(body: dict[str, Any]) -> bool:
+    tools = body.get("tools")
+    return isinstance(tools, list) and len(tools) > 0
+
+
+def prepare_chat_body(body: dict[str, Any], item: LoadedModel) -> dict[str, Any]:
+    """Pin `model` to the child path and always request stream usage.
+
+    Cline's context bar is `usage.prompt_tokens / context_length`. mlx-lm only
+    emits usage on SSE when `stream_options.include_usage` is true. LM Studio
+    always includes it; we do the same.
+    """
+    out = dict(body)
+    out["model"] = item.model
+    if wants_stream(out):
+        opts = out.get("stream_options")
+        opts = dict(opts) if isinstance(opts, dict) else {}
+        opts["include_usage"] = True
+        out["stream_options"] = opts
+    return out
+
+
 def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[BaseHTTPRequestHandler]:
     web = Path(static_dir).resolve() if static_dir else None
 
@@ -522,7 +544,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             # mlx-lm/mlx-vlm treat a different `model` string as a new Hub
             # id and snapshot_download it. Pin to the path this child was
             # started with so a short repo name cannot trigger a re-download.
-            body["model"] = item.model
+            body = prepare_chat_body(body, item)
             stream = wants_stream(body)
             pool.progress.begin(item.public_id, item.engine, stream=stream)
             job = pool.track_request(item.public_id)
@@ -535,6 +557,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     progress=pool.progress,
                     strip_channels=item.engine != "embed",
                     assume_analysis=assume_think_start(item.model, item.public_id),
+                    parse_tools=request_has_tools(body),
                     job=job,
                     logs=pool.logs,
                 )
@@ -646,6 +669,7 @@ def _proxy_to(
     progress: ProgressTracker | None = None,
     strip_channels: bool = False,
     assume_analysis: bool = False,
+    parse_tools: bool = False,
     job: Inflight | None = None,
     logs: Any = None,
 ) -> None:
@@ -689,6 +713,7 @@ def _proxy_to(
                 model_id,
                 strip_channels=strip_channels,
                 assume_analysis=assume_analysis,
+                parse_tools=parse_tools,
                 job=job,
                 logs=logs,
                 engine=item.engine,
@@ -709,7 +734,9 @@ def _proxy_to(
                 data = None
             if isinstance(data, dict):
                 payload = json.dumps(
-                    rewrite_completion_payload(data, assume_analysis=assume_analysis)
+                    rewrite_completion_payload(
+                        data, assume_analysis=assume_analysis, parse_tools=parse_tools
+                    )
                 ).encode("utf-8")
         handler.send_response(resp.status)
         for key, value in CORS.items():
@@ -805,6 +832,7 @@ def _pipe_sse(
     model_id: str,
     strip_channels: bool = False,
     assume_analysis: bool = False,
+    parse_tools: bool = False,
     job: Inflight | None = None,
     logs: Any = None,
     engine: str = "lm",
@@ -821,7 +849,9 @@ def _pipe_sse(
     leftover = b""
     sse_buf = b""
     pending_done: str | None = None
-    filt = HarmonyFilter(assume_analysis=assume_analysis) if strip_channels else None
+    filt = (
+        HarmonyFilter(assume_analysis=assume_analysis, parse_tools=parse_tools) if strip_channels else None
+    )
     read1 = getattr(resp, "read1", None)
     stopped = False
     disconnected = False
@@ -889,12 +919,20 @@ def _pipe_sse(
                     handler.wfile.flush()
         if filt is not None:
             extra_c, extra_r = filt.flush()
-            if extra_c or extra_r:
+            extra_tools = filt.take_tool_calls()
+            if extra_c or extra_r or extra_tools:
                 tail = {"choices": [{"index": 0, "delta": {}}]}
                 if extra_c:
                     tail["choices"][0]["delta"]["content"] = extra_c
                 if extra_r:
                     tail["choices"][0]["delta"]["reasoning_content"] = extra_r
+                if extra_tools:
+                    tail["choices"][0]["delta"]["tool_calls"] = extra_tools
+                    tail["choices"][0]["finish_reason"] = "tool_calls"
+                handler.wfile.write(f"data: {json.dumps(tail)}\n\n".encode("utf-8"))
+                handler.wfile.flush()
+            elif filt.saw_tools:
+                tail = {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}
                 handler.wfile.write(f"data: {json.dumps(tail)}\n\n".encode("utf-8"))
                 handler.wfile.flush()
         if pending_done:
@@ -928,11 +966,14 @@ def _rewrite_sse_frame(frame: str, filt: HarmonyFilter) -> str | None:
     if not isinstance(obj, dict):
         return frame
     rewritten = rewrite_completion_payload(obj, filt)
-    if not rewritten.get("choices"):
-        # dropped an all-special-token delta; keep comments if any
-        comments = [line for line in lines if not line.startswith("data:")]
-        return "\n".join(comments) if comments else None
     comments = [line for line in lines if not line.startswith("data:")]
+    if not rewritten.get("choices"):
+        # Usage-only SSE (stream_options.include_usage) has empty choices —
+        # Cline's context bar reads that chunk. Do not drop it.
+        if rewritten.get("usage"):
+            return "\n".join(comments + [f"data: {json.dumps(rewritten)}"])
+        comments_only = [line for line in lines if not line.startswith("data:")]
+        return "\n".join(comments_only) if comments_only else None
     out = comments + [f"data: {json.dumps(rewritten)}"]
     return "\n".join(out)
 
