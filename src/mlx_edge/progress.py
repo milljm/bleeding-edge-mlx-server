@@ -34,20 +34,41 @@ DECODE_TOKENS = re.compile(r"Decode progress:.*?generated_tokens=(\d+)", re.I)
 DECODE_DONE = re.compile(r"Decode completed:.*?generated_tokens=(\d+)", re.I)
 REQUEST_DONE = re.compile(r"Request completed:", re.I)
 
+LOAD_PCT = re.compile(r"(?<!\d)(\d{1,3}(?:\.\d+)?)\s*%")
+LOAD_FETCH = re.compile(r"Fetching\s+(\d+)\s*/\s*(\d+)", re.I)
+LOAD_BYTES = re.compile(
+    r"(\d+(?:\.\d+)?)\s*([KMGT]i?B)\s*/\s*(\d+(?:\.\d+)?)\s*([KMGT]i?B)",
+    re.I,
+)
+_BYTE_UNITS = {
+    "B": 1.0,
+    "KB": 1e3,
+    "MB": 1e6,
+    "GB": 1e9,
+    "TB": 1e12,
+    "KIB": 1024.0,
+    "MIB": 1024.0**2,
+    "GIB": 1024.0**3,
+    "TIB": 1024.0**4,
+}
+
 
 def now() -> float:
     return time.time()
 
 
-def _ratio(processed: int, total: int | None) -> float:
+def _ratio(processed: float, total: float | None) -> float:
     if not total or total <= 0:
         return 0.0
-    return round(min(1.0, max(0.0, processed / total)), 4)
+    return round(min(1.0, max(0.0, float(processed) / float(total))), 4)
 
 
 def row_progress(row: dict[str, Any]) -> float:
     """0.0 idle/unknown → 1.0 when prefill is done and tokens are decoding."""
     phase = row.get("phase")
+    if phase == "loading":
+        value = row.get("progress")
+        return float(value) if isinstance(value, (int, float)) else 0.0
     if phase in {"decode", "done"}:
         return 1.0
     if phase == "error":
@@ -144,6 +165,33 @@ def parse_progress_text(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _to_bytes(value: float, unit: str) -> float:
+    return value * _BYTE_UNITS.get(unit.upper(), 1.0)
+
+
+def parse_load_text(text: str) -> dict[str, Any] | None:
+    """Percent / file / byte progress from a child while Serve is in flight."""
+    if not text:
+        return None
+    match = LOAD_FETCH.search(text)
+    if match:
+        processed = int(match.group(1))
+        total = int(match.group(2))
+        return {"kind": "load", "processed": processed, "total": total}
+    match = LOAD_BYTES.search(text)
+    if match:
+        processed = _to_bytes(float(match.group(1)), match.group(2))
+        total = _to_bytes(float(match.group(3)), match.group(4))
+        if total > 0:
+            return {"kind": "load", "processed": processed, "total": total}
+    match = LOAD_PCT.search(text)
+    if match:
+        pct = float(match.group(1))
+        if 0.0 <= pct <= 100.0:
+            return {"kind": "load", "ratio": pct / 100.0}
+    return None
+
+
 def parse_sse_event(event: str) -> dict[str, Any] | None:
     """Interpret one SSE frame (comments + data lines)."""
     comment_hit = parse_progress_text(event)
@@ -229,7 +277,36 @@ class ProgressTracker:
             self._models[model_id] = row
             self._bump()
 
+    def begin_load(self, model_id: str, engine: str) -> None:
+        with self._cv:
+            self._cancel_timer(model_id)
+            row = idle_row(model_id, engine)
+            row["phase"] = "loading"
+            row["status"] = "processing"
+            row["progress"] = 0.0
+            row["in_flight"] = 0
+            self._models[model_id] = row
+            self._bump()
+
+    def end_load(self, model_id: str) -> None:
+        with self._cv:
+            row = self._models.get(model_id)
+            if not row or row.get("phase") != "loading":
+                return
+            engine = str(row.get("engine") or "lm")
+            self._models[model_id] = idle_row(model_id, engine)
+            self._bump()
+
     def ingest_log(self, model_id: str, engine: str, line: str) -> None:
+        loading = False
+        with self._lock:
+            row = self._models.get(model_id)
+            loading = bool(row and row.get("phase") == "loading")
+        if loading:
+            event = parse_load_text(line)
+            if event:
+                self.apply(model_id, engine, event)
+            return
         event = parse_progress_text(line)
         if event:
             self.apply(model_id, engine, event)
@@ -257,7 +334,21 @@ class ProgressTracker:
         at = now()
         with self._cv:
             row = self._models.get(model_id)
-            if row is None or not row.get("in_flight"):
+            if row is None:
+                return
+            if kind == "load":
+                if row.get("phase") != "loading":
+                    return
+                ratio = event.get("ratio")
+                if not isinstance(ratio, (int, float)):
+                    ratio = _ratio(event.get("processed") or 0, event.get("total"))
+                prev = float(row.get("progress") or 0.0)
+                row["progress"] = max(prev, min(1.0, float(ratio)))
+                row["status"] = "processing"
+                row["engine"] = engine or row.get("engine") or "lm"
+                self._bump()
+                return
+            if not row.get("in_flight"):
                 # Keep-hot / warmup hits the child directly. Those logs must
                 # not look like a user generation (stuck "generating" / green
                 # embed dot).

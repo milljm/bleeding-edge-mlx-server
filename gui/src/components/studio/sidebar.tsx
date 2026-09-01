@@ -1,10 +1,15 @@
-import { type FormEvent, type ReactNode, useMemo, useState } from "react";
+import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, Folder, PanelLeft, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatContext, DIR_PLACEHOLDER, sortLoadedFirst } from "@/lib/models";
-import { modelIsBusy, modelIsLive } from "@/lib/edge-api";
+import { formatContext, DIR_PLACEHOLDER, sortLoadedFirst, type ModelRec } from "@/lib/models";
+import {
+  modelIsBusy,
+  modelIsLive,
+  modelLoadProgress,
+  type ProgressSnapshot,
+} from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -152,71 +157,141 @@ export function Sidebar({
             <p className="px-2 py-6 text-sm text-muted-foreground">{emptyHint}</p>
           ) : (
             <ul className="space-y-1">
-              {filtered.map((model) => {
-                const active = model.id === selectedId;
-                const live = modelIsLive(served, model);
-                const error = failed[model.id];
-                const loading = loadingIds.includes(model.id);
-                const busy = modelIsBusy(progress, model);
-                const inUse = live || loading || pinKeys.includes(model.id);
-                const context = formatContext(model.context);
-                return (
-                  <li key={model.id}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        selectModel(model.id);
-                        onNavigate?.();
-                      }}
-                      aria-busy={loading || busy || undefined}
-                      className={cn(
-                        "relative flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ring-inset transition-colors duration-150",
-                        inUse && "bg-hot/20 text-foreground hover:bg-hot/30",
-                        error && !inUse && "bg-destructive/40 text-foreground hover:bg-destructive/50 ring-1 ring-destructive/60",
-                        !inUse && !error && "hover:bg-accent",
-                        active && "ring-2 ring-primary",
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          "mt-1.5 size-1.5 shrink-0 rounded-full",
-                          busy
-                            ? "busy-dot"
-                            : loading
-                              ? "animate-pulse bg-hot"
-                              : live
-                                ? "bg-hot"
-                                : error
-                                  ? "bg-destructive"
-                                  : "bg-border",
-                        )}
-                        title={busy ? "generating" : loading ? "loading" : live ? "loaded" : error ? "failed" : undefined}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">{model.name}</span>
-                        <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                          <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "embed" ? "accent" : "default"}>
-                            {model.engine}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {busy ? "generating · " : loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}
-                            {model.quant} · {model.size}
-                            {context ? ` · ${context}` : ""}
-                          </span>
-                        </span>
-                      </span>
-                      {loading ? (
-                        <span className="load-bar" role="progressbar" aria-label={`Loading ${model.name}`} />
-                      ) : null}
-                    </button>
-                  </li>
-                );
-              })}
+              {filtered.map((model) => (
+                <ModelCard
+                  key={model.id}
+                  model={model}
+                  active={model.id === selectedId}
+                  live={modelIsLive(served, model)}
+                  error={failed[model.id]}
+                  loading={loadingIds.includes(model.id)}
+                  busy={modelIsBusy(progress, model)}
+                  progress={progress}
+                  onSelect={() => {
+                    selectModel(model.id);
+                    onNavigate?.();
+                  }}
+                />
+              ))}
             </ul>
           )}
         </div>
       </Section>
     </aside>
+  );
+}
+
+function useLoadFill(active: boolean, reported: number | null) {
+  const [eased, setEased] = useState(0);
+  const started = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!active) {
+      started.current = null;
+      setEased(0);
+      return;
+    }
+    started.current = started.current ?? performance.now();
+    const reduce =
+      typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      setEased(0.55);
+      return;
+    }
+    let raf = 0;
+    const tick = (now: number) => {
+      const elapsed = (now - (started.current ?? now)) / 1000;
+      setEased(0.92 * (1 - Math.exp(-elapsed / 14)));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [active]);
+
+  if (!active) return 0;
+  return Math.min(0.96, Math.max(reported ?? 0, eased));
+}
+
+function ModelCard({
+  model,
+  active,
+  live,
+  error,
+  loading,
+  busy,
+  progress,
+  onSelect,
+}: {
+  model: ModelRec;
+  active: boolean;
+  live: boolean;
+  error?: string;
+  loading: boolean;
+  busy: boolean;
+  progress: ProgressSnapshot | null;
+  onSelect: () => void;
+}) {
+  const reported = modelLoadProgress(progress, model);
+  const fill = useLoadFill(loading, reported);
+  const tinted = live && !loading;
+  const context = formatContext(model.context);
+
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-busy={loading || busy || undefined}
+        className={cn(
+          "relative flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ring-inset transition-colors duration-150",
+          tinted && "bg-live/20 text-foreground hover:bg-live/30",
+          error && !tinted && !loading && "bg-destructive/40 text-foreground hover:bg-destructive/50 ring-1 ring-destructive/60",
+          !tinted && !error && !loading && "hover:bg-accent",
+          loading && "text-foreground",
+          active && "ring-2 ring-primary",
+        )}
+      >
+        {loading ? (
+          <span
+            className="load-fill"
+            style={{ "--load-pct": String(fill) } as CSSProperties}
+            role="progressbar"
+            aria-label={`Loading ${model.name}`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(fill * 100)}
+          />
+        ) : null}
+        <span
+          className={cn(
+            "relative mt-1.5 size-1.5 shrink-0 rounded-full",
+            busy
+              ? "busy-dot"
+              : loading
+                ? "animate-pulse bg-live"
+                : live
+                  ? "bg-live"
+                  : error
+                    ? "bg-destructive"
+                    : "bg-border",
+          )}
+          title={busy ? "generating" : loading ? "loading" : live ? "loaded" : error ? "failed" : undefined}
+        />
+        <span className="relative min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{model.name}</span>
+          <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
+            <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "embed" ? "accent" : "default"}>
+              {model.engine}
+            </Badge>
+            <span className="text-xs text-muted-foreground">
+              {busy ? "generating · " : loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}
+              {model.quant} · {model.size}
+              {context ? ` · ${context}` : ""}
+            </span>
+          </span>
+        </span>
+      </button>
+    </li>
   );
 }
 

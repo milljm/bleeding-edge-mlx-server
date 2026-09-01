@@ -92,10 +92,14 @@ curl -N http://127.0.0.1:8080/v1/progress/stream
 }
 ```
 
-`phase` is `idle` | `prefill` | `decode` | `done` | `error`. `progress` is always
-a float `0.0`–`1.0` (never `null`). New keys can land later under the same
-object (`version` bumps if the meaning of a field changes). Numbers come from
-mlx-lm keepalives (`: keepalive 2048/6540`) and from child logs
+`phase` is `idle` | `loading` | `prefill` | `decode` | `done` | `error`.
+`progress` is always a float `0.0`–`1.0` (never `null`). During Serve,
+`phase` is `loading` and `progress` tracks whatever the child logs (tqdm
+percent, `Fetching n/m`, download bytes) — mlx-lm does not always emit a
+ratio, so the GUI also eases the card fill until the engine is healthy.
+New keys can land later under the same object (`version` bumps if the
+meaning of a field changes). Numbers come from mlx-lm keepalives
+(`: keepalive 2048/6540`) and from child logs
 (`Prompt processing progress: 2048/6540`, mlx-vlm `Prefill progress: …`).
 
 Live updates from another app (browser or Node):

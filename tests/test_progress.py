@@ -1,6 +1,6 @@
 import unittest
 
-from mlx_edge.progress import ProgressTracker, parse_progress_text, parse_sse_event
+from mlx_edge.progress import ProgressTracker, parse_load_text, parse_progress_text, parse_sse_event
 
 
 class ProgressTests(unittest.TestCase):
@@ -85,6 +85,37 @@ class ProgressTests(unittest.TestCase):
         snap = tracker.snapshot()
         self.assertFalse(snap["active"])
         self.assertEqual(snap["models"][0]["phase"], "idle")
+
+
+    def test_parse_load_percent_and_fetch(self):
+        pct = parse_load_text("model.safetensors:  45%|████      | 1.2G/2.6G")
+        self.assertEqual(pct["kind"], "load")
+        self.assertAlmostEqual(pct["ratio"], 0.45)
+        fetch = parse_load_text("Fetching 8/19 files")
+        self.assertEqual(fetch, {"kind": "load", "processed": 8, "total": 19})
+        nbytes = parse_load_text("Downloading: 1.5GB / 3.0GB")
+        self.assertEqual(nbytes["kind"], "load")
+        self.assertAlmostEqual(nbytes["processed"] / nbytes["total"], 0.5)
+
+    def test_load_phase_does_not_look_like_generating(self):
+        tracker = ProgressTracker(linger=0)
+        tracker.begin_load("MiniMax-M3-ConfigI-MLX", "lm")
+        snap = tracker.snapshot()
+        row = snap["models"][0]
+        self.assertEqual(row["phase"], "loading")
+        self.assertEqual(row["status"], "processing")
+        self.assertEqual(row["progress"], 0.0)
+        self.assertTrue(snap["active"])
+        tracker.ingest_log("MiniMax-M3-ConfigI-MLX", "lm", "Fetching 4/8 files")
+        snap = tracker.snapshot()
+        self.assertEqual(snap["models"][0]["progress"], 0.5)
+        tracker.ingest_log("MiniMax-M3-ConfigI-MLX", "lm", "Prompt processing progress: 8/8")
+        snap = tracker.snapshot()
+        self.assertEqual(snap["models"][0]["phase"], "loading")
+        tracker.end_load("MiniMax-M3-ConfigI-MLX")
+        snap = tracker.snapshot()
+        self.assertEqual(snap["models"][0]["phase"], "idle")
+        self.assertFalse(snap["active"])
 
 
 if __name__ == "__main__":
