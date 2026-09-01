@@ -16,16 +16,25 @@ basename (any case), `org/name`, or the path.
   and `max_context_length` (same integer). Cline / Continue / Open WebUI read
   these. `GET /v1/models/{id}` is the same object for one loaded engine.
   `GET /api/v0/models` is the LM Studio-shaped list (`type`, `state`,
-  `max_context_length`, `loaded_context_length`) for clients that probe that.
+  `max_context_length`, `loaded_context_length`, `capabilities.tool_use`) for
+  clients that probe that. Chat/VLM rows also advertise `function_calling` /
+  `tool_use` so Cline knows native tools are on.
 - `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway
   pins the request to the already-loaded engine so mlx-lm does not Hub-download
   a second copy. Pass `"stream": true` for OpenAI SSE (`data: …` then
-  `data: [DONE]`). Tokens are flushed as they generate; the gateway does not
-  buffer the child. Harmony `<|channel|>` wrappers and MiniMax thinking blocks
-  (`<think>` / `<mm:think>`) are stripped from `content`
-  (`reasoning_content` holds analysis). If MiniMax never emits a closer, the
-  buffered text is promoted back to `content` so the reply is not empty.
-  Embedding models return 400 here — use `/v1/embeddings`.
+  `data: [DONE]`). Streaming requests always get `stream_options.include_usage`
+  so the final chunk carries `usage.prompt_tokens` (Cline's context bar is
+  usage / context_length). Tokens are flushed as they generate; the gateway does
+  not buffer the child. Harmony `<|channel|>` wrappers and MiniMax thinking
+  blocks (`<think>` / `<mm:think>`) are stripped from `content`
+  (`reasoning_content` holds analysis). MiniMax `<minimax:tool_call>` XML,
+  Qwen `<tool_call>` JSON, and Harmony `to=functions.NAME` calls are rewritten
+  into OpenAI `tool_calls` with `finish_reason: "tool_calls"` — that is what
+  Cline / Continue / Open WebUI execute. Tool XML is only buffered after
+  `</think>` and only when the request actually has `tools`, so a MiniMax-M2
+  chat without tools still streams token-by-token. If MiniMax never emits a
+  closer, the buffered text is promoted back to `content` so the reply is not
+  empty. Embedding models return 400 here — use `/v1/embeddings`.
 - `POST /v1/embeddings` — OpenAI embeddings. Routed to a loaded `embed` engine
   (`mlx_vlm.server --embedding-model`). Body `model` is pinned to the spawn
   path. Does not touch chat children.
@@ -139,12 +148,15 @@ Hugging Face**, then Reload.
 The gateway splits thinking into `reasoning_content` and keeps OpenAI
 `content` as the visible answer. Thinking tokens stream immediately (they are
 not buffered until the closer). After `</think>` / `</mm:think>` the answer
-streams as `content`. If MiniMax never emits a closer, the thinking is promoted
+streams as `content`. **Tool calls** (MiniMax XML, Qwen `<tool_call>`, Harmony
+`to=functions.NAME`) become OpenAI `tool_calls` so agent clients can execute
+them. If MiniMax never emits a closer, the thinking is promoted
 back to `content` so clients do not see an empty reply. `[DONE]` is held until
 that flush. **ConfigI / gpt-oss** start in Harmony's final channel — those
 tokens are `content` from the first delta (clients like LangChain that only
 read `delta.content` would otherwise see empty chunks and one dump at EOS).
-Plain Qwen / Llama output is untouched.
+Plain Qwen / Llama output is untouched. Injected MiniMax / Harmony chat
+templates include a `# Tools` block when the request has `tools`.
 
 ## Hot-load vs LM Studio
 

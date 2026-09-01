@@ -574,6 +574,123 @@ class GatewayTests(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
 
+    def test_stream_asks_child_for_usage(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        seen = {}
+
+        class RecHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                seen["body"] = json.loads(self.rfile.read(length).decode())
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
+                self.wfile.write(
+                    b'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":1,"total_tokens":13}}\n\n'
+                )
+                self.wfile.write(b"data: [DONE]\n\n")
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), RecHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(id="demo", engine="lm", model="/m/demo", port=engine_port, started_at=0.0, public_id="demo")
+            self.pool._models[item.id] = item
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps({"model": "demo", "messages": [{"role": "user", "content": "hi"}], "stream": True}).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = resp.read().decode()
+            self.assertTrue(seen["body"]["stream_options"]["include_usage"])
+            self.assertEqual(seen["body"]["model"], "/m/demo")
+            self.assertIn("prompt_tokens", body)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_minimax_xml_becomes_openai_tool_calls(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        xml = (
+            "<minimax:tool_call>\n<invoke name=\"read_file\">"
+            "<parameter name=\"path\">a.py</parameter></invoke>\n</minimax:tool_call>"
+        )
+
+        class ToolStream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                payload = json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {"role": "assistant", "content": xml},
+                            }
+                        ]
+                    }
+                ).encode()
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), ToolStream)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-8bit",
+                engine="lm",
+                model="/m/MiniMax-M2.7-8bit",
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-8bit",
+            )
+            self.pool._models[item.id] = item
+            status, body = self._json(
+                "POST",
+                "/v1/chat/completions",
+                {
+                    "model": "MiniMax-M2.7-8bit",
+                    "messages": [{"role": "user", "content": "read a.py"}],
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                            },
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(status, 200)
+            choice = body["choices"][0]
+            self.assertEqual(choice["finish_reason"], "tool_calls")
+            self.assertEqual(choice["message"]["tool_calls"][0]["function"]["name"], "read_file")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_embeddings_proxy_rewrites_model_and_rejects_chat_engine(self):
         from http.server import BaseHTTPRequestHandler
 
@@ -750,6 +867,8 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(status, 200)
             self.assertEqual(native["data"][0]["type"], "llm")
             self.assertEqual(native["data"][0]["loaded_context_length"], 40960)
+            self.assertTrue(native["data"][0]["capabilities"]["tool_use"])
+            self.assertTrue(row["capabilities"]["function_calling"])
 
     def test_stop_aborts_stream_and_clears_progress(self):
         from http.server import BaseHTTPRequestHandler
