@@ -166,7 +166,7 @@ export async function postScan(dirs: string[]): Promise<{ models: ModelRec[]; er
   return { models: body.models ?? [], errors: body.errors ?? [] };
 }
 
-export type ProgressPhase = "idle" | "prefill" | "decode" | "done" | "error";
+export type ProgressPhase = "idle" | "loading" | "prefill" | "decode" | "done" | "error";
 export type ProgressStatus = "ready" | "processing" | "complete" | "error";
 
 export type PromptProgress = {
@@ -238,6 +238,17 @@ export function modelIsBusy(
     if (!processing) return false;
     return needles.some((n) => sameModel(row.id, n));
   });
+}
+
+export function modelLoadProgress(
+  snap: ProgressSnapshot | null | undefined,
+  model?: { id: string; repo: string; path?: string; name?: string } | null,
+): number | null {
+  if (!snap || !model) return null;
+  const needles = [model.repo, model.id, model.path, model.name].filter((n): n is string => Boolean(n));
+  const row = snap.models.find((item) => needles.some((n) => sameModel(item.id, n)));
+  if (!row || row.phase !== "loading") return null;
+  return clamp01(Number(row.progress));
 }
 
 function normalizeProgress(body: Partial<ProgressSnapshot>): ProgressSnapshot {

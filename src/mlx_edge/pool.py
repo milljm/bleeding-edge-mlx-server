@@ -270,6 +270,7 @@ class ModelPool:
             public_id=public_id,
         )
         self.progress.ensure(item.public_id, engine)
+        self.progress.begin_load(item.public_id, engine)
         self._pump_logs(item)
         try:
             self._call_wait(port, proc)
@@ -281,6 +282,7 @@ class ModelPool:
             if code is not None:
                 raise RuntimeError(annotate_load_error(f"{label} exited with code {code}")) from exc
             raise RuntimeError(annotate_load_error(f"{label} failed to start: {exc}")) from exc
+        self.progress.end_load(item.public_id)
         if proc is not None:
             warmup_engine(item)
             self._warm_at[item.public_id] = time.time()

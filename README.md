@@ -76,7 +76,8 @@ You will need to `conda activate edge` in every new shell.
 ## What you get
 
 - **Studio.** Watch a folder, Serve / Reload / Unload, playground, logging, and
-  per-model flags. Loaded (and loading) cards sort to the top and tint orange.
+  per-model flags. Loaded (and loading) cards sort to the top. Serve fills the
+  card left to right — orange in dark, green in light — until the engine is up.
   A live user chat or embed request pulses `generating`.
 - **One `/v1`.** Chat, embeddings, and several models on the same URL.
   `GET /v1/models` lists each by basename. Clients send that name as `model`.
