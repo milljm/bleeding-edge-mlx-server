@@ -82,7 +82,9 @@ You will need to `conda activate edge` in every new shell.
   composer square) cancels it — including when a remote OpenAI client aborts
   the stream.
 - **One `/v1`.** Chat, embeddings, and several models on the same URL.
-  `GET /v1/models` lists each by basename. Clients send that name as `model`.
+  `GET /v1/models` lists each by basename and includes the checkpoint's context
+  window (`context_length`) when `config.json` has it. Clients send that name
+  as `model`.
 - **Hot-load.** Each Serve is its own `mlx_lm.server` / `mlx_vlm.server` child.
   Switching `model` routes to a process that is already up — not an unload.
   [How that differs from LM Studio](docs/api.md#hot-load-vs-lm-studio).

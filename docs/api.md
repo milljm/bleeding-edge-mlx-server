@@ -10,7 +10,13 @@ basename (any case), `org/name`, or the path.
 ## Endpoints
 
 - `GET /` — Edge GUI (`edge-gui` / `mlx-edge serve --gui`)
-- `GET /v1/models` — every hot-loaded model, listed by basename
+- `GET /v1/models` — every hot-loaded model, listed by basename. Each row is
+  OpenAI-shaped (`id`, `object`, `created`, `owned_by`) plus the checkpoint's
+  context window when `config.json` has one: `context_length`, `max_model_len`,
+  and `max_context_length` (same integer). Cline / Continue / Open WebUI read
+  these. `GET /v1/models/{id}` is the same object for one loaded engine.
+  `GET /api/v0/models` is the LM Studio-shaped list (`type`, `state`,
+  `max_context_length`, `loaded_context_length`) for clients that probe that.
 - `POST /v1/chat/completions` — routed by basename / Hub id / path. The gateway
   pins the request to the already-loaded engine so mlx-lm does not Hub-download
   a second copy. Pass `"stream": true` for OpenAI SSE (`data: …` then
