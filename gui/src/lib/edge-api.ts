@@ -167,7 +167,7 @@ export type ProgressStatus = "ready" | "processing" | "complete" | "error";
 export type PromptProgress = {
   processed_tokens: number;
   total_tokens: number | null;
-  ratio: number | null;
+  ratio: number;
   cached_tokens: number | null;
   started_at: number | null;
   updated_at: number | null;
@@ -187,6 +187,7 @@ export type ModelProgress = {
   phase: ProgressPhase;
   status: ProgressStatus;
   stream: boolean | null;
+  progress: number;
   prompt: PromptProgress;
   generation: GenerationProgress;
   error: string | null;
@@ -197,6 +198,7 @@ export type ProgressSnapshot = {
   version: 1;
   generated_at: number;
   active: boolean;
+  progress: number;
   models: ModelProgress[];
 };
 
@@ -209,8 +211,66 @@ export async function getProgress(model?: string): Promise<ProgressSnapshot> {
     version: 1,
     generated_at: Number(body.generated_at || Date.now() / 1000),
     active: Boolean(body.active),
-    models: Array.isArray(body.models) ? (body.models as ModelProgress[]) : [],
+    progress: clamp01(Number(body.progress)),
+    models: Array.isArray(body.models)
+      ? body.models.map((row) => ({
+          ...(row as ModelProgress),
+          progress: clamp01(Number((row as ModelProgress).progress)),
+        }))
+      : [],
   };
+}
+
+function clamp01(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+export type LogLevel = "info" | "warn" | "error" | "http" | "progress";
+export type LogLine = {
+  seq: number;
+  ts: number;
+  model: string;
+  engine: string;
+  level: LogLevel;
+  text: string;
+};
+
+export async function getLogs(model?: string): Promise<{ seq: number; lines: LogLine[] }> {
+  const url = model ? `/v1/logs?model=${encodeURIComponent(model)}` : "/v1/logs";
+  const res = await fetch(url);
+  const body = (await parseJson(res)) as { seq?: number; lines?: LogLine[] };
+  return { seq: Number(body.seq || 0), lines: Array.isArray(body.lines) ? body.lines : [] };
+}
+
+export async function clearLogs() {
+  await fetch("/v1/logs/clear", { method: "POST" }).catch(() => undefined);
+}
+
+export type TemplateInfo = {
+  path: string;
+  repo: string;
+  bundled: boolean;
+  source: string | null;
+  chat_template: string | null;
+  preset?: string | null;
+  tried?: string[];
+};
+
+export async function fetchTemplate(input: { model: string; repo?: string }): Promise<TemplateInfo> {
+  const res = await fetch("/v1/template", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return (await parseJson(res)) as TemplateInfo;
+}
+
+export async function inspectTemplate(model: string, repo?: string): Promise<TemplateInfo> {
+  const params = new URLSearchParams({ model });
+  if (repo) params.set("repo", repo);
+  const res = await fetch(`/v1/template?${params.toString()}`);
+  return (await parseJson(res)) as TemplateInfo;
 }
 
 export function deltaContent(payload: unknown): string {
@@ -220,5 +280,17 @@ export function deltaContent(payload: unknown): string {
   const delta = choice?.delta?.content;
   if (typeof delta === "string") return delta;
   const message = choice?.message?.content;
+  return typeof message === "string" ? message : "";
+}
+
+export function deltaReasoning(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const choices = (
+    payload as { choices?: { delta?: { reasoning_content?: unknown }; message?: { reasoning_content?: unknown } }[] }
+  ).choices;
+  const choice = choices?.[0];
+  const delta = choice?.delta?.reasoning_content;
+  if (typeof delta === "string") return delta;
+  const message = choice?.message?.reasoning_content;
   return typeof message === "string" ? message : "";
 }

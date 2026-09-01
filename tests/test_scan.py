@@ -74,7 +74,21 @@ class ScanTests(unittest.TestCase):
             (path / "model.safetensors").write_bytes(b"w")
             models = list_models(str(root))
             self.assertEqual(models[0]["context"], 32768)
+            self.assertFalse(models[0]["hasChatTemplate"])
 
+    def test_detects_chat_template(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "org" / "MiniMax-M2.7-ConfigI-MLX"
+            _write_model(path)
+            models = list_models(str(root))
+            self.assertFalse(models[0]["hasChatTemplate"])
+            (path / "tokenizer_config.json").write_text(
+                json.dumps({"chat_template": "<|start|>{{ message }}<|end|>"}),
+                encoding="utf-8",
+            )
+            models = list_models(str(root))
+            self.assertTrue(models[0]["hasChatTemplate"])
 
     def test_hub_cache_layout(self):
         with tempfile.TemporaryDirectory() as tmp:

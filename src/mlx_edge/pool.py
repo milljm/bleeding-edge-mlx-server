@@ -16,7 +16,9 @@ from pathlib import Path
 from typing import Callable
 
 from mlx_edge.engines import get_engine
+from mlx_edge.logs import LogBuffer
 from mlx_edge.progress import ProgressTracker
+from mlx_edge.templates import template_for_spawn
 
 
 def free_port() -> int:
@@ -197,11 +199,18 @@ class ModelPool:
         spawn: SpawnFn | None = None,
         wait: Callable[..., None] | None = None,
         progress: ProgressTracker | None = None,
+        logs: LogBuffer | None = None,
+        keep_hot: bool = True,
     ) -> None:
         self._models: dict[str, LoadedModel] = {}
         self._spawn = spawn or default_spawn
         self._wait = wait or wait_healthy
         self.progress = progress or ProgressTracker()
+        self.logs = logs or LogBuffer()
+        self._keep_hot = keep_hot
+        self._hot_stop = threading.Event()
+        self._hot_thread: threading.Thread | None = None
+        self._busy: set[str] = set()
 
     def list(self) -> list[LoadedModel]:
         return sorted(self._models.values(), key=lambda m: m.started_at)
@@ -220,6 +229,8 @@ class ModelPool:
 
     def load(self, engine: str, model: str, extra: list[str] | None = None) -> LoadedModel:
         extra = list(extra or [])
+        if engine == "lm":
+            extra = template_for_spawn(model, extra)
         existing = self.resolve(model)
         if existing:
             self.unload(existing.id)
@@ -250,6 +261,8 @@ class ModelPool:
             raise RuntimeError(f"{label} failed to start: {exc}") from exc
         if proc is not None:
             warmup_engine(item)
+            if engine == "embed":
+                self._ensure_keep_hot()
         self._models[item.id] = item
         return item
 
@@ -261,6 +274,7 @@ class ModelPool:
         public_id = item.public_id
         engine = item.engine
         progress = self.progress
+        logs = self.logs
 
         def run() -> None:
             try:
@@ -276,6 +290,7 @@ class ModelPool:
                         sys.stderr.flush()
                     except Exception:
                         pass
+                    logs.append(public_id, engine, text)
                     progress.ingest_log(public_id, engine, text)
             except Exception:
                 pass
@@ -288,6 +303,49 @@ class ModelPool:
         except TypeError:
             self._wait(port)
 
+    def mark_busy(self, name: str, busy: bool) -> None:
+        item = self.resolve(name)
+        key = item.public_id if item else name
+        if busy:
+            self._busy.add(key)
+        else:
+            self._busy.discard(key)
+
+    def reheat_others(self, item: LoadedModel) -> None:
+        """After embeddings, warm chat graphs; after chat, keep embeddings hot."""
+        if item.proc is None:
+            return
+
+        def run() -> None:
+            want_embed = item.engine != "embed"
+            for other in self.list():
+                if other.id == item.id or other.proc is None:
+                    continue
+                if other.public_id in self._busy:
+                    continue
+                if want_embed and other.engine == "embed":
+                    warmup_engine(other, timeout=20.0)
+                elif not want_embed and other.engine != "embed":
+                    warmup_engine(other, timeout=45.0)
+
+        threading.Thread(target=run, name=f"mlx-edge-reheat-{item.public_id}", daemon=True).start()
+
+    def _ensure_keep_hot(self) -> None:
+        if not self._keep_hot or self._hot_thread is not None:
+            return
+
+        def loop() -> None:
+            while not self._hot_stop.wait(12.0):
+                for item in self.list():
+                    if item.engine != "embed" or item.proc is None:
+                        continue
+                    if item.public_id in self._busy:
+                        continue
+                    warmup_engine(item, timeout=15.0)
+
+        self._hot_thread = threading.Thread(target=loop, name="mlx-edge-keep-hot", daemon=True)
+        self._hot_thread.start()
+
     def unload(self, name: str) -> LoadedModel | None:
         item = self.resolve(name)
         if not item:
@@ -298,6 +356,7 @@ class ModelPool:
         return item
 
     def unload_all(self) -> None:
+        self._hot_stop.set()
         for key in list(self._models):
             self.unload(key)
 

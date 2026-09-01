@@ -5,16 +5,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { engineLabel } from "@/lib/command";
-import { modelIsLive } from "@/lib/edge-api";
+import { fetchTemplate, modelIsLive } from "@/lib/edge-api";
 import { flagsDirty, flagsFor, type FlagDef, type FlagGroup } from "@/lib/flags";
-import { formatContext } from "@/lib/models";
+import { formatContext, loadTarget } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 
 const GROUP_LABEL: Record<FlagGroup, string> = {
   server: "Server",
   sampling: "Sampling",
   thinking: "Thinking",
+  template: "Chat template",
 };
 
 export function FlagPanel() {
@@ -88,6 +90,7 @@ export function FlagPanel() {
           Keep a chat model loaded too — RAG does not unload it.
         </p>
       ) : null}
+      {model.engine === "lm" ? <TemplateCard /> : null}
       {groups.map((group) => {
         const defs = visible.filter((d) => (d.group ?? "server") === group);
         if (defs.length === 0) return null;
@@ -115,6 +118,82 @@ export function FlagPanel() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+function TemplateCard() {
+  const model = useStudio((s) => s.selected());
+  const flags = useStudio((s) => s.flags);
+  const setFlag = useStudio((s) => s.setFlag);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  if (!model) return null;
+  const bundled = Boolean(model.hasChatTemplate);
+  const override = String(flags.chatTemplate || "").trim();
+
+  async function pull() {
+    if (!model) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      const info = await fetchTemplate({ model: loadTarget(model), repo: model.repo });
+      if (!info.chat_template) {
+        setNote("No template on the Hub for this repo. Paste Jinja below, then Reload.");
+        return;
+      }
+      setFlag("chatTemplate", info.chat_template);
+      setNote(info.bundled ? "Using the checkpoint template." : `Loaded from ${info.source || "Hugging Face"}. Reload to apply.`);
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : "Fetch failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Chat template</h3>
+          <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+            {bundled
+              ? "This checkpoint already has a tokenizer chat_template. mlx-lm will apply it."
+              : "No chat_template in this checkpoint. MiniMax / gpt-oss will leak <|channel|> tokens unless you apply one. Edge also strips those tokens from /v1 content."}
+          </p>
+        </div>
+        <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void pull()}>
+          {busy ? "Pulling…" : "Pull from Hugging Face"}
+        </Button>
+      </div>
+      {note ? <p className="text-xs text-ok">{note}</p> : null}
+      <div className="space-y-2">
+        <Label htmlFor="chatTemplate">Jinja override</Label>
+        <Textarea
+          id="chatTemplate"
+          value={String(flags.chatTemplate || "")}
+          onChange={(e) => setFlag("chatTemplate", e.target.value)}
+          placeholder="Leave empty to use the checkpoint (or the template Edge injects on Serve when missing)."
+          className="min-h-28 font-mono text-xs"
+        />
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <Label htmlFor="useDefaultChatTemplate" className="text-foreground">
+            Default chat template
+          </Label>
+          <p className="mt-1 text-xs text-muted-foreground">Force the tokenizer default instead of the override.</p>
+        </div>
+        <Switch
+          id="useDefaultChatTemplate"
+          checked={Boolean(flags.useDefaultChatTemplate)}
+          onCheckedChange={(checked) => setFlag("useDefaultChatTemplate", checked)}
+        />
+      </div>
+      {override ? (
+        <p className="text-xs text-muted-foreground">{override.length.toLocaleString("en-US")} characters · Reload to apply</p>
+      ) : null}
+    </section>
   );
 }
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+from mlx_edge.channels import HarmonyFilter, harmony_model_name, rewrite_completion_payload
 from mlx_edge.pool import LoadedModel, ModelPool
 from mlx_edge.progress import ProgressTracker
 
@@ -173,6 +174,15 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/progress/stream", "/edge/progress/stream"}:
                 self._progress_stream()
                 return
+            if path in {"/v1/logs", "/edge/logs"}:
+                self._logs()
+                return
+            if path in {"/v1/logs/stream", "/edge/logs/stream"}:
+                self._logs_stream()
+                return
+            if path in {"/v1/template", "/v1/templates"}:
+                self._template_inspect()
+                return
             if self._static(raw_path):
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
@@ -203,6 +213,13 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 return
             if path in {"/v1/embeddings", "/embeddings"}:
                 self._embeddings()
+                return
+            if path in {"/v1/template", "/v1/templates"}:
+                self._template_fetch()
+                return
+            if path in {"/v1/logs/clear", "/v1/logs"}:
+                pool.logs.clear()
+                self._json({"ok": True, "seq": pool.logs.seq()})
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
 
@@ -304,6 +321,77 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
                 return
 
+        def _logs(self) -> None:
+            qs = parse_qs(urlparse(self.path).query)
+            needle = (qs.get("model") or [None])[0]
+            after = 0
+            try:
+                after = int((qs.get("after") or ["0"])[0] or 0)
+            except ValueError:
+                after = 0
+            limit = 500
+            try:
+                limit = int((qs.get("limit") or ["500"])[0] or 500)
+            except ValueError:
+                limit = 500
+            self._json(pool.logs.snapshot(needle, after=after, limit=limit))
+
+        def _logs_stream(self) -> None:
+            qs = parse_qs(urlparse(self.path).query)
+            needle = (qs.get("model") or [None])[0]
+            self.send_response(200)
+            self._cors()
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            last = -1
+            try:
+                while True:
+                    snap = pool.logs.snapshot(needle, after=last, limit=200)
+                    lines = snap.get("lines") or []
+                    if lines:
+                        self.wfile.write(f"data: {json.dumps(snap)}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                        last = int(snap.get("seq") or last)
+                    else:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+                    pool.logs.wait(pool.logs.seq(), 1.0)
+            except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+                return
+
+        def _template_inspect(self) -> None:
+            qs = parse_qs(urlparse(self.path).query)
+            model = (qs.get("model") or [""])[0]
+            repo = (qs.get("repo") or [None])[0]
+            if not model:
+                self._json({"error": {"message": "model is required", "type": "invalid_request_error"}}, 400)
+                return
+            from mlx_edge.templates import inspect_template
+
+            item = pool.resolve(model)
+            path = item.model if item else model
+            self._json(inspect_template(path, repo or (item.model if item else None)))
+
+        def _template_fetch(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                return
+            model = str(body.get("model") or "").strip()
+            repo = str(body.get("repo") or "").strip() or None
+            if not model:
+                self._json({"error": {"message": "model is required", "type": "invalid_request_error"}}, 400)
+                return
+            from mlx_edge.templates import fetch_template
+
+            item = pool.resolve(model)
+            path = item.model if item else model
+            self._json(fetch_template(path, repo))
+
         def _resolve(self, requested: object, *, kind: str) -> LoadedModel | None:
             loaded = pool.list()
             if not loaded:
@@ -395,7 +483,20 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             body["model"] = item.model
             stream = wants_stream(body)
             pool.progress.begin(item.public_id, item.engine, stream=stream)
-            _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=stream, progress=pool.progress)
+            pool.mark_busy(item.public_id, True)
+            try:
+                _proxy_to(
+                    self,
+                    item,
+                    json.dumps(body).encode("utf-8"),
+                    stream=stream,
+                    progress=pool.progress,
+                    strip_channels=item.engine != "embed",
+                    assume_analysis=harmony_model_name(item.model, item.public_id),
+                )
+            finally:
+                pool.mark_busy(item.public_id, False)
+                pool.reheat_others(item)
 
         def _embeddings(self) -> None:
             try:
@@ -407,7 +508,12 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if item is None:
                 return
             body["model"] = item.model
-            _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=False, progress=None)
+            pool.mark_busy(item.public_id, True)
+            try:
+                _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=False, progress=None)
+            finally:
+                pool.mark_busy(item.public_id, False)
+                pool.reheat_others(item)
 
     return GatewayHandler
 
@@ -418,6 +524,8 @@ def _proxy_to(
     body: bytes,
     stream: bool = False,
     progress: ProgressTracker | None = None,
+    strip_channels: bool = False,
+    assume_analysis: bool = False,
 ) -> None:
     headers = {
         key: value
@@ -440,14 +548,30 @@ def _proxy_to(
             content_type = resp.headers.get("Content-Type") or "application/json"
             is_stream = stream or "text/event-stream" in content_type.lower()
             if is_stream:
-                _pipe_sse(handler, resp, tracker, model_id)
+                _pipe_sse(
+                    handler,
+                    resp,
+                    tracker,
+                    model_id,
+                    strip_channels=strip_channels,
+                    assume_analysis=assume_analysis,
+                )
                 return
             payload = resp.read()
+            if strip_channels:
+                try:
+                    data = json.loads(payload.decode("utf-8") or "{}")
+                except json.JSONDecodeError:
+                    data = None
+                if isinstance(data, dict):
+                    payload = json.dumps(
+                        rewrite_completion_payload(data, assume_analysis=assume_analysis)
+                    ).encode("utf-8")
             handler.send_response(resp.status)
             for key, value in CORS.items():
                 handler.send_header(key, value)
             for key, value in resp.headers.items():
-                if key.lower() in {"transfer-encoding", "connection", "content-encoding"}:
+                if key.lower() in {"transfer-encoding", "connection", "content-encoding", "content-length"}:
                     continue
                 handler.send_header(key, value)
             handler.send_header("Content-Length", str(len(payload)))
@@ -484,6 +608,8 @@ def _pipe_sse(
     resp: Any,
     tracker: ProgressTracker | None,
     model_id: str,
+    strip_channels: bool = False,
+    assume_analysis: bool = False,
 ) -> None:
     handler.send_response(200)
     for key, value in CORS.items():
@@ -494,21 +620,73 @@ def _pipe_sse(
     handler.send_header("X-Accel-Buffering", "no")
     handler.end_headers()
     leftover = b""
+    sse_buf = b""
+    filt = HarmonyFilter(assume_analysis=assume_analysis) if strip_channels else None
     read1 = getattr(resp, "read1", None)
     try:
         while True:
             chunk = read1(512) if read1 else resp.read(512)
             if not chunk:
                 break
-            handler.wfile.write(chunk)
-            handler.wfile.flush()
-            if tracker:
-                leftover = tracker.ingest_sse(model_id, leftover + chunk)
+            if filt is None:
+                handler.wfile.write(chunk)
+                handler.wfile.flush()
+                if tracker:
+                    leftover = tracker.ingest_sse(model_id, leftover + chunk)
+                continue
+            sse_buf += chunk
+            frames = sse_buf.split(b"\n\n")
+            sse_buf = frames.pop() if frames else b""
+            for raw in frames:
+                frame = raw.decode("utf-8", "replace")
+                if tracker:
+                    leftover = tracker.ingest_sse(model_id, leftover + raw + b"\n\n")
+                rewritten = _rewrite_sse_frame(frame, filt)
+                if rewritten is None:
+                    continue
+                handler.wfile.write(rewritten.encode("utf-8") + b"\n\n")
+                handler.wfile.flush()
+        if filt is not None:
+            extra_c, extra_r = filt.flush()
+            if extra_c or extra_r:
+                tail = {"choices": [{"index": 0, "delta": {}}]}
+                if extra_c:
+                    tail["choices"][0]["delta"]["content"] = extra_c
+                if extra_r:
+                    tail["choices"][0]["delta"]["reasoning_content"] = extra_r
+                handler.wfile.write(f"data: {json.dumps(tail)}\n\n".encode("utf-8"))
+                handler.wfile.flush()
         if tracker:
             tracker.complete(model_id)
     except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
         if tracker:
             tracker.fail(model_id, "stream closed")
+
+
+def _rewrite_sse_frame(frame: str, filt: HarmonyFilter) -> str | None:
+    lines = frame.splitlines()
+    if not lines:
+        return None
+    data_lines = [line[5:].strip() for line in lines if line.startswith("data:")]
+    if not data_lines:
+        return frame
+    payload = "\n".join(data_lines)
+    if payload == "[DONE]":
+        return frame
+    try:
+        obj = json.loads(payload)
+    except json.JSONDecodeError:
+        return frame
+    if not isinstance(obj, dict):
+        return frame
+    rewritten = rewrite_completion_payload(obj, filt)
+    if not rewritten.get("choices"):
+        # dropped an all-special-token delta; keep comments if any
+        comments = [line for line in lines if not line.startswith("data:")]
+        return "\n".join(comments) if comments else None
+    comments = [line for line in lines if not line.startswith("data:")]
+    out = comments + [f"data: {json.dumps(rewritten)}"]
+    return "\n".join(out)
 
 
 def serve_forever(
