@@ -29,7 +29,9 @@ export function EndpointPanel() {
           does not stall a chat model that is already up. Prompt-processing progress is a float{" "}
           <span className="font-mono">0.0–1.0</span> on <span className="font-mono">GET /v1/progress</span>{" "}
           (and SSE <span className="font-mono">/v1/progress/stream</span>). Edge strips Harmony{" "}
-          <span className="font-mono">{"<|channel|>"}</span> tokens from chat content. Bind with{" "}
+          <span className="font-mono">{"<|channel|>"}</span> tokens and MiniMax{" "}
+          <span className="font-mono">{"<think>"}</span> / <span className="font-mono">{"<mm:think>"}</span>{" "}
+          blocks from chat content. Bind with{" "}
           <span className="font-mono">edge-gui --host 0.0.0.0</span> for remote clients.
         </p>
       </div>

@@ -159,7 +159,7 @@ function TemplateCard() {
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             {bundled
               ? "This checkpoint already has a tokenizer chat_template. mlx-lm will apply it."
-              : "No chat_template in this checkpoint. MiniMax / gpt-oss will leak <|channel|> tokens unless you apply one. Edge also strips those tokens from /v1 content."}
+              : "No chat_template in this checkpoint. Edge pulls one from Hugging Face on Serve. MiniMax-M2.7 / M3 use <think> / <mm:think>; ConfigI / gpt-oss use Harmony <|channel|>. The gateway strips both from /v1 content so the reply is not empty."}
           </p>
         </div>
         <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void pull()}>

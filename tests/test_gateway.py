@@ -357,6 +357,120 @@ class GatewayTests(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
 
+    def test_minimax_held_answer_emitted_before_done(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        class MiniMaxStream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"Hello from MiniMax."}}]}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), MiniMaxStream)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-8bit",
+                engine="lm",
+                model="/models/MiniMax-M2.7-8bit",
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-8bit",
+            )
+            self.pool._models[item.id] = item
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "MiniMax-M2.7-8bit",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = resp.read().decode()
+            self.assertIn("Hello from MiniMax.", body)
+            done_at = body.rfind("data: [DONE]")
+            hello_at = body.find("Hello from MiniMax.")
+            self.assertGreaterEqual(hello_at, 0)
+            self.assertGreater(done_at, hello_at)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_minimax_think_close_streams_answer(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        class ThinkStream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"plan"}}]}\n\n')
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"</think>Apple is at $1."}}]}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), ThinkStream)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-8bit",
+                engine="lm",
+                model="/models/MiniMax-M2.7-8bit",
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-8bit",
+            )
+            self.pool._models[item.id] = item
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "MiniMax-M2.7-8bit",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                body = resp.read().decode()
+            self.assertIn("Apple is at $1.", body)
+            self.assertNotIn("</think>", body)
+            self.assertIn("reasoning_content", body)
+            self.assertGreater(body.rfind("data: [DONE]"), body.find("Apple is at $1."))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_non_stream_chat_still_json(self):
         from http.server import BaseHTTPRequestHandler
 

@@ -36,14 +36,16 @@ export function Sidebar({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return models;
-    return models.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.repo.toLowerCase().includes(q) ||
-        m.engine.includes(q),
-    );
-  }, [models, query]);
+    const list = q
+      ? models.filter(
+          (m) =>
+            m.name.toLowerCase().includes(q) ||
+            m.repo.toLowerCase().includes(q) ||
+            m.engine.includes(q),
+        )
+      : models;
+    return sortLoadedFirst(list, (m) => modelIsLive(served, m) || loadingId === m.id);
+  }, [models, query, served, loadingId]);
 
   function submitDir(e: FormEvent) {
     e.preventDefault();
@@ -166,9 +168,9 @@ export function Sidebar({
                       }}
                       className={cn(
                         "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ring-inset transition-colors duration-150",
-                        live && "bg-ok/15 hover:bg-ok/20",
-                        error && !live && "bg-destructive/15 hover:bg-destructive/20",
-                        !live && !error && "hover:bg-accent",
+                        inUse && "bg-hot/20 text-foreground hover:bg-hot/30",
+                        error && !inUse && "bg-destructive/15 hover:bg-destructive/20",
+                        !inUse && !error && "hover:bg-accent",
                         active && "ring-2 ring-primary",
                       )}
                     >

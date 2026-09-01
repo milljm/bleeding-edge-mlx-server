@@ -42,3 +42,19 @@ class TemplateTests(unittest.TestCase):
             self.assertIn("<|channel|>", extra[1])
             self.assertIn("<|start|>assistant", extra[1])
             self.assertIn(HARMONY_TEMPLATE.strip()[:40], extra[1])
+
+    def test_minimax_m27_does_not_force_harmony_preset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "MiniMax-M2.7-8bit"
+            path.mkdir()
+            (path / "config.json").write_text("{}", encoding="utf-8")
+            with mock.patch("mlx_edge.templates._http_text", return_value=None):
+                extra = template_for_spawn(str(path), [])
+            self.assertEqual(extra, [])
+
+    def test_harmony_generation_prompt_starts_in_final(self):
+        self.assertIn("<|start|>assistant<|channel|>final<|message|>", HARMONY_TEMPLATE)
+        gen = HARMONY_TEMPLATE.split("add_generation_prompt")[-1]
+        self.assertIn("final", gen)
+        self.assertNotIn("analysis", gen)
+

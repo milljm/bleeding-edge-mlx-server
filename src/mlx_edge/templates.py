@@ -3,8 +3,9 @@
 MiniMax / gpt-oss checkpoints often ship without ``chat_template`` in
 ``tokenizer_config.json``. mlx-lm then does not wrap messages, and the model
 prints Harmony special tokens as visible text. Edge will use a local template
-if present, otherwise pull one from Hugging Face, and falls back to a compact
-Harmony template for MiniMax / gpt-oss names.
+if present, otherwise pull one from Hugging Face. A compact Harmony template
+is only a last-resort fallback for gpt-oss / ConfigI names — not generic
+MiniMax-M2.7 / M3, which speak ``<think>`` / ``<mm:think>``.
 """
 
 from __future__ import annotations
@@ -32,12 +33,12 @@ HARMONY_TEMPLATE = """{%- for message in messages -%}
 {%- endif -%}
 {%- endfor -%}
 {%- if add_generation_prompt -%}
-<|start|>assistant<|channel|>analysis<|message|>
+<|start|>assistant<|channel|>final<|message|>
 {%- endif -%}
 """
 
 HF_NAME_HINTS = (
-    ("minimax", ("MiniMaxAI/MiniMax-M2.7", "mlx-community/MiniMax-M2.7-4bit")),
+    ("minimax", ("MiniMaxAI/MiniMax-M2.7", "MiniMaxAI/MiniMax-M3", "mlx-community/MiniMax-M2.7-4bit")),
     ("gpt-oss", ("openai/gpt-oss-20b",)),
     ("gpt_oss", ("openai/gpt-oss-20b",)),
 )
@@ -120,7 +121,9 @@ def template_for_spawn(model_path: str, extra: list[str]) -> list[str]:
 
 def _preset_for(model_path: str, repo: str | None) -> str | None:
     blob = f"{model_path} {repo or ''}".lower()
-    if "minimax" in blob or "gpt-oss" in blob or "gpt_oss" in blob or "harmony" in blob:
+    # Official MiniMax-M2.7 / M3 templates use <think> / <mm:think>, not Harmony.
+    # Harmony is gpt-oss and thetom-ai ConfigI conversions.
+    if "gpt-oss" in blob or "gpt_oss" in blob or "harmony" in blob or "configi" in blob:
         return "harmony"
     return None
 
