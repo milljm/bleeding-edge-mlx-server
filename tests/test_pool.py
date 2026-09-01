@@ -112,11 +112,15 @@ class PoolTests(unittest.TestCase):
             self.assertEqual(row["context_length"], 196608)
             self.assertEqual(row["max_model_len"], 196608)
             self.assertEqual(row["max_context_length"], 196608)
+            self.assertEqual(row["n_ctx"], 196608)
+            self.assertTrue(row["capabilities"]["function_calling"])
+            self.assertTrue(row["capabilities"]["tool_use"])
             native = item.as_lmstudio()
             self.assertEqual(native["type"], "llm")
             self.assertEqual(native["state"], "loaded")
             self.assertEqual(native["max_context_length"], 196608)
             self.assertEqual(native["loaded_context_length"], 196608)
+            self.assertTrue(native["capabilities"]["tool_use"])
 
     def test_lm_server_argv_not_deprecated_module(self):
         argv = server_argv("lm")

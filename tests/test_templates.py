@@ -55,7 +55,8 @@ class TemplateTests(unittest.TestCase):
             self.assertEqual(extra[0], "--chat-template")
             self.assertIn("]~b]ai", extra[1])
             self.assertIn("<think>", extra[1])
-            self.assertNotIn("<|channel|>", extra[1])
+            self.assertIn("<minimax:tool_call>", extra[1])
+            self.assertIn("{%- if tools", extra[1])
             gen = extra[1].split("add_generation_prompt")[-1]
             self.assertIn("<think>", gen)
 
@@ -93,3 +94,5 @@ class TemplateTests(unittest.TestCase):
         gen = HARMONY_TEMPLATE.split("add_generation_prompt")[-1]
         self.assertIn("final", gen)
         self.assertNotIn("analysis", gen)
+        self.assertIn("{%- if tools", HARMONY_TEMPLATE)
+        self.assertIn("to=functions", HARMONY_TEMPLATE)
