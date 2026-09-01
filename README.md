@@ -261,15 +261,19 @@ empty `content`). Settings → Chat template lets you paste Jinja or **Pull from
 Hugging Face**, then Reload.
 
 The gateway splits thinking into `reasoning_content` and keeps OpenAI
-`content` as the visible answer. If a MiniMax generation never emits a closer,
-the buffered thinking is promoted back to `content` so clients do not see an
-empty reply (and `[DONE]` is held until that flush). Plain Qwen / Llama output
-is untouched.
+`content` as the visible answer. Thinking tokens stream immediately (they are
+not buffered until the closer). After `</think>` / `</mm:think>` the answer
+streams as `content`. If MiniMax never emits a closer, the thinking is promoted
+back to `content` so clients do not see an empty reply. `[DONE]` is held until
+that flush. Plain Qwen / Llama output is untouched.
 
 ### Studio
 
 The Models sidebar sorts loaded (and currently loading) cards above the rest
-and tints them orange in both light and dark themes.
+and tints them orange in both light and dark themes. While a user chat or
+embed request is in flight, that card pulses orange↔green and says
+`generating`. Keep-hot embedding heartbeats and post-request graph warmups do
+not count — idle loaded models stay orange, not generating.
 
 ### Logging
 

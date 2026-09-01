@@ -508,9 +508,10 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if item is None:
                 return
             body["model"] = item.model
+            pool.progress.begin(item.public_id, item.engine, stream=False)
             pool.mark_busy(item.public_id, True)
             try:
-                _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=False, progress=None)
+                _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=False, progress=pool.progress)
             finally:
                 pool.mark_busy(item.public_id, False)
                 pool.reheat_others(item)

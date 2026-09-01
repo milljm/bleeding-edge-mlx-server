@@ -1,3 +1,3 @@
 """Bleeding-edge MLX engine manager, multi-model OpenAI gateway, and Edge GUI."""
 
-__version__ = "0.8.1"
+__version__ = "0.8.2"

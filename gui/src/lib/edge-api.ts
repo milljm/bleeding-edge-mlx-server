@@ -229,7 +229,7 @@ export function modelIsBusy(
   if (!snap?.active || !model) return false;
   const needles = [model.repo, model.id, model.path, model.name].filter((n): n is string => Boolean(n));
   return snap.models.some((row) => {
-    const processing = row.status === "processing" || row.phase === "prefill" || row.phase === "decode";
+    const processing = row.status === "processing" && (row.phase === "prefill" || row.phase === "decode");
     if (!processing) return false;
     return needles.some((n) => sameModel(row.id, n));
   });
