@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatContext, DIR_PLACEHOLDER, sortLoadedFirst, type ModelRec } from "@/lib/models";
 import {
+  modelGeneration,
   modelIsBusy,
   modelIsLive,
   modelLoadProgress,
@@ -152,7 +153,7 @@ export function Sidebar({
             <p className="mt-2 text-xs text-ok">{loadedCount} hot-loaded on /v1</p>
           ) : null}
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-visible px-2 pb-3 pt-2">
           {filtered.length === 0 ? (
             <p className="px-2 py-6 text-sm text-muted-foreground">{emptyHint}</p>
           ) : (
@@ -212,6 +213,62 @@ function useLoadFill(active: boolean, reported: number | null) {
   return Math.min(0.96, Math.max(reported ?? 0, eased));
 }
 
+function useTokenBubble(liveTokens: number, generating: boolean) {
+  const [display, setDisplay] = useState(0);
+  const [phase, setPhase] = useState<"hidden" | "live" | "hold" | "leave">("hidden");
+  const last = useRef(0);
+  const timers = useRef<{ hold: number | null; leave: number | null }>({ hold: null, leave: null });
+
+  function clearTimers() {
+    if (timers.current.hold != null) window.clearTimeout(timers.current.hold);
+    if (timers.current.leave != null) window.clearTimeout(timers.current.leave);
+    timers.current = { hold: null, leave: null };
+  }
+
+  useEffect(() => {
+    if (generating && liveTokens > 0) {
+      last.current = liveTokens;
+      setDisplay(liveTokens);
+      setPhase("live");
+      clearTimers();
+    }
+  }, [generating, liveTokens]);
+
+  useEffect(() => {
+    if (generating) return;
+    if (last.current <= 0) return;
+    setDisplay(last.current);
+    setPhase("hold");
+    clearTimers();
+    timers.current.hold = window.setTimeout(() => {
+      setPhase("leave");
+      timers.current.leave = window.setTimeout(() => {
+        setPhase("hidden");
+        setDisplay(0);
+        last.current = 0;
+      }, 500);
+    }, 2000);
+    return clearTimers;
+  }, [generating]);
+
+  return { display, phase };
+}
+
+function TokenBubble({ tokens, generating }: { tokens: number; generating: boolean }) {
+  const { display, phase } = useTokenBubble(tokens, generating);
+  if (phase === "hidden" || display <= 0) return null;
+  const label = `${display.toLocaleString("en-US")} tokens`;
+  return (
+    <span
+      className={cn("tok-bubble", phase === "leave" && "is-leaving")}
+      title={label}
+      aria-label={`${label} generated`}
+    >
+      {display.toLocaleString("en-US")}
+    </span>
+  );
+}
+
 function ModelCard({
   model,
   active,
@@ -235,9 +292,10 @@ function ModelCard({
   const fill = useLoadFill(loading, reported);
   const tinted = live && !loading;
   const context = formatContext(model.context);
+  const gen = modelGeneration(progress, model);
 
   return (
-    <li>
+    <li className="relative overflow-visible">
       <button
         type="button"
         onClick={onSelect}
@@ -251,6 +309,7 @@ function ModelCard({
           active && "ring-2 ring-primary",
         )}
       >
+        <TokenBubble tokens={gen.tokens} generating={gen.generating} />
         {loading ? (
           <span
             className="load-fill"
