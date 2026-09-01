@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -646,6 +647,175 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(_quiet_access('"GET /v1/logs/stream HTTP/1.1" 200 -'))
         self.assertFalse(_quiet_access('"POST /v1/chat/completions HTTP/1.1" 200 -'))
         self.assertFalse(_quiet_access('"POST /v1/embeddings HTTP/1.1" 200 -'))
+
+    def test_stop_aborts_stream_and_clears_progress(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        released = threading.Event()
+        started = threading.Event()
+
+        class SlowStream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b": keepalive 1/8\n\n")
+                self.wfile.flush()
+                started.set()
+                try:
+                    for _ in range(40):
+                        self.wfile.write(b'data: {"choices":[{"delta":{"content":"."}}]}\n\n')
+                        self.wfile.flush()
+                        time.sleep(0.05)
+                    self.wfile.write(b"data: [DONE]\n\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    released.set()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), SlowStream)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-ConfigI-MLX",
+                engine="lm",
+                model="/models/MiniMax-M2.7-ConfigI-MLX",
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-ConfigI-MLX",
+            )
+            self.pool._models[item.id] = item
+            self.pool.progress.ensure(item.public_id, "lm")
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "MiniMax-M2.7-ConfigI-MLX",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            result: dict = {}
+
+            def consume() -> None:
+                try:
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        result["body"] = resp.read()
+                except Exception as exc:  # noqa: BLE001
+                    result["error"] = exc
+
+            worker = threading.Thread(target=consume, daemon=True)
+            worker.start()
+            self.assertTrue(started.wait(2))
+            snap = self._json("GET", "/v1/progress")[1]
+            self.assertTrue(snap.get("active"))
+            status, body = self._json("POST", "/v1/stop", {"model": "MiniMax-M2.7-ConfigI-MLX"})
+            self.assertEqual(status, 200)
+            self.assertEqual(body.get("stopped"), ["MiniMax-M2.7-ConfigI-MLX"])
+            worker.join(3)
+            self.assertTrue(released.wait(2))
+            idle = self._json("GET", "/v1/progress")[1]
+            self.assertFalse(idle.get("active"))
+            self.assertEqual(idle["models"][0]["phase"], "idle")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_client_disconnect_stops_generation(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        released = threading.Event()
+        started = threading.Event()
+
+        class SlowStream(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b": keepalive 2/8\n\n")
+                self.wfile.flush()
+                started.set()
+                try:
+                    for _ in range(40):
+                        self.wfile.write(b'data: {"choices":[{"delta":{"content":"."}}]}\n\n')
+                        self.wfile.flush()
+                        time.sleep(0.05)
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    released.set()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), SlowStream)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="MiniMax-M2.7-ConfigI-MLX",
+                engine="lm",
+                model="/models/MiniMax-M2.7-ConfigI-MLX",
+                port=engine_port,
+                started_at=0.0,
+                public_id="MiniMax-M2.7-ConfigI-MLX",
+            )
+            self.pool._models[item.id] = item
+            self.pool.progress.ensure(item.public_id, "lm")
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "MiniMax-M2.7-ConfigI-MLX",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                self.assertTrue(started.wait(2))
+                resp.read(32)
+            self.assertTrue(released.wait(2.5))
+            # give the gateway finally-block a tick to cancel progress
+            deadline = time.time() + 1.5
+            phase = None
+            while time.time() < deadline:
+                snap = self._json("GET", "/v1/progress")[1]
+                phase = (snap.get("models") or [{}])[0].get("phase")
+                if not snap.get("active") and phase == "idle":
+                    break
+                time.sleep(0.05)
+            self.assertEqual(phase, "idle")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_stop_with_nothing_inflight(self):
+        status, body = self._json("POST", "/v1/stop", {"model": "missing"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get("stopped"), [])
 
 
 if __name__ == "__main__":

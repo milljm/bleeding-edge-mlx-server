@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
+import select
 import socket
-import urllib.error
-import urllib.request
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from mlx_edge.channels import HarmonyFilter, harmony_model_name, rewrite_completion_payload
-from mlx_edge.pool import LoadedModel, ModelPool
+from mlx_edge.pool import Inflight, LoadedModel, ModelPool
 from mlx_edge.progress import ProgressTracker
 
 CORS = {
@@ -228,6 +229,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 return
             if path in {"/v1/embeddings", "/embeddings"}:
                 self._embeddings()
+                return
+            if path in {"/v1/stop", "/v1/chat/stop", "/stop"}:
+                self._stop()
                 return
             if path in {"/v1/template", "/v1/templates"}:
                 self._template_fetch()
@@ -501,6 +505,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             stream = wants_stream(body)
             pool.progress.begin(item.public_id, item.engine, stream=stream)
             pool.mark_busy(item.public_id, True)
+            job = pool.track_request(item.public_id)
             try:
                 _proxy_to(
                     self,
@@ -510,8 +515,11 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     progress=pool.progress,
                     strip_channels=item.engine != "embed",
                     assume_analysis=harmony_model_name(item.model, item.public_id),
+                    job=job,
+                    logs=pool.logs,
                 )
             finally:
+                pool.untrack_request(job)
                 pool.mark_busy(item.public_id, False)
                 pool.reheat_others(item)
 
@@ -527,13 +535,92 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             body["model"] = item.model
             pool.progress.begin(item.public_id, item.engine, stream=False)
             pool.mark_busy(item.public_id, True)
+            job = pool.track_request(item.public_id)
             try:
-                _proxy_to(self, item, json.dumps(body).encode("utf-8"), stream=False, progress=pool.progress)
+                _proxy_to(
+                    self,
+                    item,
+                    json.dumps(body).encode("utf-8"),
+                    stream=False,
+                    progress=pool.progress,
+                    job=job,
+                    logs=pool.logs,
+                )
             finally:
+                pool.untrack_request(job)
                 pool.mark_busy(item.public_id, False)
                 pool.reheat_others(item)
 
+        def _stop(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                return
+            model = str(body.get("model") or "").strip()
+            stopped = pool.stop_generation(model or None)
+            for mid in stopped:
+                engine = "lm"
+                item = pool.resolve(mid)
+                if item is not None:
+                    engine = item.engine
+                pool.logs.append(mid, engine, "Stopped generation")
+            self._json({"ok": True, "stopped": stopped, "models": stopped})
+
     return GatewayHandler
+
+
+def _client_gone(handler: BaseHTTPRequestHandler) -> bool:
+    sock = getattr(handler, "connection", None)
+    if sock is None:
+        return False
+    try:
+        ready, _, _ = select.select([sock], [], [], 0)
+        if not ready:
+            return False
+        data = sock.recv(1, socket.MSG_PEEK)
+        return data == b""
+    except (BlockingIOError, InterruptedError):
+        return False
+    except OSError:
+        return True
+
+
+def _wait_io(child_sock: socket.socket | None, handler: BaseHTTPRequestHandler, job: Inflight | None, idle: float = 0.2) -> str:
+    """'data' | 'abort' | 'disconnect' | 'timeout'."""
+    if job is not None and job.abort.is_set():
+        return "abort"
+    if _client_gone(handler):
+        if job is not None:
+            job.trigger()
+        return "disconnect"
+    client = getattr(handler, "connection", None)
+    watch = [s for s in (child_sock, client) if s is not None]
+    if not watch:
+        return "timeout"
+    try:
+        ready, _, _ = select.select(watch, [], [], idle)
+    except (OSError, ValueError):
+        return "disconnect"
+    if job is not None and job.abort.is_set():
+        return "abort"
+    if client is not None and client in ready and _client_gone(handler):
+        if job is not None:
+            job.trigger()
+        return "disconnect"
+    if child_sock is not None and child_sock in ready:
+        return "data"
+    return "timeout"
+
+
+def _write_aborted_done(handler: BaseHTTPRequestHandler) -> None:
+    try:
+        payload = {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+        handler.wfile.write(f"data: {json.dumps(payload)}\n\n".encode("utf-8"))
+        handler.wfile.write(b"data: [DONE]\n\n")
+        handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        return
 
 
 def _proxy_to(
@@ -544,6 +631,8 @@ def _proxy_to(
     progress: ProgressTracker | None = None,
     strip_channels: bool = False,
     assume_analysis: bool = False,
+    job: Inflight | None = None,
+    logs: Any = None,
 ) -> None:
     headers = {
         key: value
@@ -553,72 +642,138 @@ def _proxy_to(
     headers["Content-Type"] = handler.headers.get("Content-Type") or "application/json"
     headers["Accept-Encoding"] = "identity"
     headers["Connection"] = "close"
-    req = urllib.request.Request(
-        f"http://127.0.0.1:{item.port}{handler.path}",
-        data=body,
-        method="POST",
-        headers=headers,
-    )
     tracker = progress
     model_id = item.public_id
+    conn = http.client.HTTPConnection("127.0.0.1", item.port, timeout=600)
     try:
-        with urllib.request.urlopen(req, timeout=600) as resp:
-            content_type = resp.headers.get("Content-Type") or "application/json"
-            is_stream = stream or "text/event-stream" in content_type.lower()
-            if is_stream:
-                _pipe_sse(
-                    handler,
-                    resp,
-                    tracker,
-                    model_id,
-                    strip_channels=strip_channels,
-                    assume_analysis=assume_analysis,
-                )
+        conn.connect()
+        if job is not None:
+            job.set_close(conn.close)
+        conn.request("POST", handler.path, body=body, headers=headers)
+        deadline = time.time() + 600
+        while True:
+            state = _wait_io(conn.sock, handler, job)
+            if state == "data":
+                break
+            if state in {"abort", "disconnect"}:
+                if tracker:
+                    tracker.cancel(model_id)
+                if logs is not None and state == "disconnect":
+                    logs.append(model_id, item.engine, "Client disconnected — stopping generation")
                 return
-            payload = resp.read()
-            if strip_channels:
-                try:
-                    data = json.loads(payload.decode("utf-8") or "{}")
-                except json.JSONDecodeError:
-                    data = None
-                if isinstance(data, dict):
-                    payload = json.dumps(
-                        rewrite_completion_payload(data, assume_analysis=assume_analysis)
-                    ).encode("utf-8")
-            handler.send_response(resp.status)
-            for key, value in CORS.items():
-                handler.send_header(key, value)
-            for key, value in resp.headers.items():
-                if key.lower() in {"transfer-encoding", "connection", "content-encoding", "content-length"}:
-                    continue
-                handler.send_header(key, value)
-            handler.send_header("Content-Length", str(len(payload)))
-            handler.end_headers()
-            handler.wfile.write(payload)
+            if time.time() > deadline:
+                raise TimeoutError("engine timed out")
+        resp = conn.getresponse()
+        content_type = resp.getheader("Content-Type") or "application/json"
+        is_stream = stream or "text/event-stream" in content_type.lower()
+        if is_stream:
+            _pipe_sse(
+                handler,
+                resp,
+                tracker,
+                model_id,
+                strip_channels=strip_channels,
+                assume_analysis=assume_analysis,
+                job=job,
+                logs=logs,
+                engine=item.engine,
+                child_sock=conn.sock,
+            )
+            return
+        payload = _read_body(resp, handler, job, conn.sock)
+        if payload is None:
             if tracker:
-                tracker.complete(model_id)
-    except urllib.error.HTTPError as exc:
-        payload = exc.read()
-        handler.send_response(exc.code)
+                tracker.cancel(model_id)
+            if logs is not None and _client_gone(handler):
+                logs.append(model_id, item.engine, "Client disconnected — stopping generation")
+            return
+        if strip_channels:
+            try:
+                data = json.loads(payload.decode("utf-8") or "{}")
+            except json.JSONDecodeError:
+                data = None
+            if isinstance(data, dict):
+                payload = json.dumps(
+                    rewrite_completion_payload(data, assume_analysis=assume_analysis)
+                ).encode("utf-8")
+        handler.send_response(resp.status)
         for key, value in CORS.items():
             handler.send_header(key, value)
-        handler.send_header("Content-Type", exc.headers.get("Content-Type") or "application/json")
+        for key, value in resp.getheaders():
+            if key.lower() in {"transfer-encoding", "connection", "content-encoding", "content-length"}:
+                continue
+            handler.send_header(key, value)
         handler.send_header("Content-Length", str(len(payload)))
         handler.end_headers()
         handler.wfile.write(payload)
         if tracker:
-            tracker.fail(model_id, f"engine HTTP {exc.code}")
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        handler.send_response(502)
-        for key, value in CORS.items():
-            handler.send_header(key, value)
-        msg = json.dumps({"error": {"message": str(exc), "type": "server_error"}}).encode()
-        handler.send_header("Content-Type", "application/json")
-        handler.send_header("Content-Length", str(len(msg)))
-        handler.end_headers()
-        handler.wfile.write(msg)
+            if resp.status >= 400:
+                tracker.fail(model_id, f"engine HTTP {resp.status}")
+            else:
+                tracker.complete(model_id)
+    except (BrokenPipeError, ConnectionResetError):
+        if tracker:
+            tracker.cancel(model_id)
+        if logs is not None:
+            logs.append(model_id, item.engine, "Client disconnected — stopping generation")
+    except (TimeoutError, OSError, http.client.HTTPException) as exc:
+        if job is not None and job.abort.is_set():
+            if tracker:
+                tracker.cancel(model_id)
+            return
+        try:
+            handler.send_response(502)
+            for key, value in CORS.items():
+                handler.send_header(key, value)
+            msg = json.dumps({"error": {"message": str(exc), "type": "server_error"}}).encode()
+            handler.send_header("Content-Type", "application/json")
+            handler.send_header("Content-Length", str(len(msg)))
+            handler.end_headers()
+            handler.wfile.write(msg)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
         if tracker:
             tracker.fail(model_id, str(exc))
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+
+def _arm_timeout(sock: socket.socket | None, seconds: float) -> None:
+    if sock is None:
+        return
+    try:
+        sock.settimeout(seconds)
+    except OSError:
+        return
+
+
+def _read_body(resp: http.client.HTTPResponse, handler: BaseHTTPRequestHandler, job: Inflight | None, child_sock: socket.socket | None) -> bytes | None:
+    _arm_timeout(child_sock, 0.2)
+    chunks: list[bytes] = []
+    deadline = time.time() + 600
+    while True:
+        if job is not None and job.abort.is_set():
+            return None
+        if _client_gone(handler):
+            if job is not None:
+                job.trigger()
+            return None
+        try:
+            chunk = resp.read(65536)
+        except TimeoutError:
+            if time.time() > deadline:
+                raise TimeoutError("engine timed out")
+            continue
+        except (OSError, http.client.HTTPException):
+            if job is not None and job.abort.is_set():
+                return None
+            raise
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
 
 
 def _is_done_frame(frame: str) -> bool:
@@ -635,6 +790,10 @@ def _pipe_sse(
     model_id: str,
     strip_channels: bool = False,
     assume_analysis: bool = False,
+    job: Inflight | None = None,
+    logs: Any = None,
+    engine: str = "lm",
+    child_sock: socket.socket | None = None,
 ) -> None:
     handler.send_response(200)
     for key, value in CORS.items():
@@ -649,9 +808,28 @@ def _pipe_sse(
     pending_done: str | None = None
     filt = HarmonyFilter(assume_analysis=assume_analysis) if strip_channels else None
     read1 = getattr(resp, "read1", None)
+    stopped = False
+    disconnected = False
+    _arm_timeout(child_sock, 0.2)
     try:
         while True:
-            chunk = read1(512) if read1 else resp.read(512)
+            if job is not None and job.abort.is_set():
+                stopped = True
+                break
+            if _client_gone(handler):
+                stopped = True
+                disconnected = True
+                if job is not None:
+                    job.trigger()
+                break
+            try:
+                chunk = read1(512) if read1 else resp.read(512)
+            except TimeoutError:
+                continue
+            except (OSError, http.client.HTTPException):
+                if job is not None and job.abort.is_set():
+                    stopped = True
+                break
             if not chunk:
                 break
             if filt is None:
@@ -677,6 +855,14 @@ def _pipe_sse(
                     continue
                 handler.wfile.write(rewritten.encode("utf-8") + b"\n\n")
                 handler.wfile.flush()
+        if stopped:
+            if logs is not None and disconnected:
+                logs.append(model_id, engine, "Client disconnected — stopping generation")
+            if tracker:
+                tracker.cancel(model_id)
+            if not disconnected:
+                _write_aborted_done(handler)
+            return
         if filt is not None and sse_buf.strip():
             frame = sse_buf.decode("utf-8", "replace")
             rewritten = _rewrite_sse_frame(frame, filt)
@@ -702,8 +888,12 @@ def _pipe_sse(
         if tracker:
             tracker.complete(model_id)
     except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+        if job is not None:
+            job.trigger()
         if tracker:
-            tracker.fail(model_id, "stream closed")
+            tracker.cancel(model_id)
+        if logs is not None:
+            logs.append(model_id, engine, "Client disconnected — stopping generation")
 
 
 def _rewrite_sse_frame(frame: str, filt: HarmonyFilter) -> str | None:

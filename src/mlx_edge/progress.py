@@ -458,6 +458,19 @@ class ProgressTracker:
             self._schedule_idle(model_id)
             self._bump()
 
+    def cancel(self, model_id: str) -> None:
+        """Stop is not a failure — drop back to idle so the generating pulse clears."""
+        with self._cv:
+            row = self._models.get(model_id)
+            if not row:
+                return
+            if row.get("phase") == "loading":
+                return
+            engine = str(row.get("engine") or "lm")
+            self._cancel_timer(model_id)
+            self._models[model_id] = idle_row(model_id, engine)
+            self._bump()
+
     def snapshot(self, needle: str | None = None) -> dict[str, Any]:
         with self._lock:
             rows = list(self._models.values())

@@ -117,6 +117,21 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(snap["models"][0]["phase"], "idle")
         self.assertFalse(snap["active"])
 
+    def test_cancel_clears_generating_without_error(self):
+        tracker = ProgressTracker(linger=2)
+        tracker.begin("MiniMax", "lm", stream=True)
+        tracker.apply("MiniMax", "lm", {"kind": "decode_delta", "text": "hi"})
+        self.assertEqual(tracker.snapshot()["models"][0]["phase"], "decode")
+        tracker.cancel("MiniMax")
+        snap = tracker.snapshot()
+        self.assertEqual(snap["models"][0]["phase"], "idle")
+        self.assertEqual(snap["models"][0]["status"], "ready")
+        self.assertIsNone(snap["models"][0]["error"])
+        self.assertFalse(snap["active"])
+        tracker.begin_load("MiniMax", "lm")
+        tracker.cancel("MiniMax")
+        self.assertEqual(tracker.snapshot()["models"][0]["phase"], "loading")
+
 
 if __name__ == "__main__":
     unittest.main()

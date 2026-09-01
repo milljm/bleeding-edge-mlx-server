@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, Menu, PanelLeft, Play, RefreshCw, Square, X } from "lucide-react";
+import { Check, CircleStop, Copy, Menu, PanelLeft, Play, RefreshCw, Square, X } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { EndpointPanel } from "@/components/studio/endpoint";
 import { FlagPanel } from "@/components/studio/flag-panel";
@@ -11,9 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { getPrefs, modelIsLive, subscribeProgress } from "@/lib/edge-api";
+import { getPrefs, modelIsBusy, modelIsLive, postStop, subscribeProgress } from "@/lib/edge-api";
 import { flagsDirty } from "@/lib/flags";
 import { engineLabel, loadedSummary } from "@/lib/command";
+import { loadTarget } from "@/lib/models";
 import { useStudio, type StudioTab } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -37,12 +38,14 @@ export function AppShell() {
   const reloadServe = useStudio((s) => s.reloadServe);
   const loadingIds = useStudio((s) => s.loadingIds);
   const failed = useStudio((s) => s.failed);
+  const progress = useStudio((s) => s.progress);
 
   const live = modelIsLive(served, model);
   const loaded = served.find((row) => modelIsLive([row], model));
   const dirty = Boolean(live && model && flagsDirty(model.engine, flags, loaded?.flags));
   const loadingThis = Boolean(model && loadingIds.includes(model.id));
   const failedThis = model ? failed[model.id] : undefined;
+  const generating = modelIsBusy(progress, model);
 
   async function onServe() {
     if (loadingThis) return;
@@ -61,6 +64,15 @@ export function AppShell() {
       toast.success("Model reloaded");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Reload failed");
+    }
+  }
+
+  async function onStop() {
+    if (!model || !generating) return;
+    try {
+      await postStop(loadTarget(model));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Stop failed");
     }
   }
 
@@ -180,6 +192,18 @@ export function AppShell() {
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
+              {generating ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void onStop()}
+                  aria-label="Stop generation"
+                >
+                  <CircleStop className="size-3.5" />
+                  Stop
+                </Button>
+              ) : null}
               {dirty ? (
                 <Button
                   type="button"

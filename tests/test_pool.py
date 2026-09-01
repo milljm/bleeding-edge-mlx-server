@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from mlx_edge.pool import (
+    Inflight,
     ModelPool,
     annotate_load_error,
     names_match,
@@ -215,6 +216,24 @@ class PoolTests(unittest.TestCase):
         self.assertIn("MiniMax-M3", msg)
         again = annotate_load_error(msg)
         self.assertEqual(again.count("mlx-edge build"), 1)
+
+    def test_stop_generation_triggers_inflight(self):
+        with mock.patch("mlx_edge.pool.warmup_engine"), mock.patch.object(ModelPool, "_ensure_warm_worker"):
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
+            chat = pool.load("lm", "/m/MiniMax")
+            closed = []
+            job = pool.track_request(chat.public_id)
+            job.set_close(lambda: closed.append(True))
+            pool.progress.begin(chat.public_id, "lm", stream=True)
+            stopped = pool.stop_generation("MiniMax")
+            self.assertEqual(stopped, [chat.public_id])
+            self.assertTrue(job.abort.is_set())
+            self.assertEqual(closed, [True])
+            self.assertEqual(pool.progress.snapshot()["models"][0]["phase"], "idle")
+            self.assertEqual(pool.stop_generation("MiniMax"), [])
+            idle = Inflight("x")
+            idle.trigger()
+            self.assertTrue(idle.abort.is_set())
 
 
 if __name__ == "__main__":

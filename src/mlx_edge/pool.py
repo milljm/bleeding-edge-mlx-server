@@ -209,6 +209,33 @@ def warmup_engine(item: LoadedModel, timeout: float = 120.0) -> None:
         return
 
 
+class Inflight:
+    """One in-flight chat/embed so Stop / a dropped OpenAI client can abort it."""
+
+    def __init__(self, model_id: str) -> None:
+        self.model_id = model_id
+        self.abort = threading.Event()
+        self._close: Callable[[], None] | None = None
+        self._lock = threading.Lock()
+
+    def set_close(self, close: Callable[[], None]) -> None:
+        with self._lock:
+            self._close = close
+            if self.abort.is_set():
+                close()
+
+    def trigger(self) -> None:
+        self.abort.set()
+        with self._lock:
+            close = self._close
+        if close is None:
+            return
+        try:
+            close()
+        except OSError:
+            pass
+
+
 class ModelPool:
     def __init__(
         self,
@@ -233,6 +260,8 @@ class ModelPool:
         self._warm_lock = threading.Lock()
         self._warm_cv = threading.Condition(self._warm_lock)
         self._warm_thread: threading.Thread | None = None
+        self._inflight: dict[str, Inflight] = {}
+        self._inflight_lock = threading.Lock()
 
     def list(self) -> list[LoadedModel]:
         return sorted(self._models.values(), key=lambda m: m.started_at)
@@ -337,6 +366,43 @@ class ModelPool:
             self._busy.discard(key)
             self._warm_at[key] = time.time()
 
+    def track_request(self, name: str) -> Inflight:
+        item = self.resolve(name)
+        key = item.public_id if item else name
+        job = Inflight(key)
+        with self._inflight_lock:
+            prev = self._inflight.get(key)
+            self._inflight[key] = job
+        if prev is not None:
+            prev.trigger()
+        return job
+
+    def untrack_request(self, job: Inflight) -> None:
+        with self._inflight_lock:
+            if self._inflight.get(job.model_id) is job:
+                self._inflight.pop(job.model_id, None)
+
+    def stop_generation(self, name: str | None = None) -> list[str]:
+        """Abort in-flight chat/embed. Returns public ids that were signalled."""
+        with self._inflight_lock:
+            if name:
+                item = self.resolve(name)
+                key = item.public_id if item else name
+                jobs = [self._inflight[key]] if key in self._inflight else []
+            else:
+                jobs = list(self._inflight.values())
+        stopped: list[str] = []
+        seen: set[str] = set()
+        for job in jobs:
+            if job.abort.is_set():
+                continue
+            job.trigger()
+            self.progress.cancel(job.model_id)
+            if job.model_id not in seen:
+                seen.add(job.model_id)
+                stopped.append(job.model_id)
+        return stopped
+
     def _queue_warm(self, item: LoadedModel) -> bool:
         """At most one pending warmup per model. Skip busy / in-flight / cooldown."""
         if item.proc is None:
@@ -419,6 +485,7 @@ class ModelPool:
             return None
         self._models.pop(item.id, None)
         self.progress.drop(item.public_id)
+        self.stop_generation(item.public_id)
         with self._warm_lock:
             self._busy.discard(item.public_id)
             self._warming.discard(item.public_id)

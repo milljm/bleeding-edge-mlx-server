@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
-import { ArrowUp } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowUp, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { deltaContent, deltaReasoning, getProgress, modelIsLive, type ModelProgress } from "@/lib/edge-api";
+import { deltaContent, deltaReasoning, getProgress, modelIsBusy, modelIsLive, postStop, type ModelProgress } from "@/lib/edge-api";
 import { loadTarget, publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
@@ -24,21 +24,39 @@ export function Playground() {
 
 function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: number }) {
   const model = useStudio((s) => s.selected());
+  const progressSnap = useStudio((s) => s.progress);
   const [input, setInput] = useState("what is the capital of France?");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ dims: number; preview: number[]; tokens: number } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const remoteBusy = modelIsBusy(progressSnap, model);
+  const stopping = busy || remoteBusy;
+
+  async function stop() {
+    abortRef.current?.abort();
+    if (model) {
+      try {
+        await postStop(loadTarget(model));
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 
   async function run() {
     const text = input.trim();
-    if (!text || !model || !live || busy) return;
+    if (!text || !model || !live || stopping) return;
     setBusy(true);
     setError(null);
+    const ac = new AbortController();
+    abortRef.current = ac;
     try {
       const res = await fetch("/v1/embeddings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: loadTarget(model), input: text }),
+        signal: ac.signal,
       });
       const body = (await res.json().catch(() => ({}))) as {
         error?: { message?: string };
@@ -53,8 +71,10 @@ function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: nu
         tokens: Number(body.usage?.prompt_tokens || 0),
       });
     } catch (err) {
+      if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
       setError(err instanceof Error ? err.message : "Request failed");
     } finally {
+      if (abortRef.current === ac) abortRef.current = null;
       setBusy(false);
     }
   }
@@ -108,13 +128,19 @@ function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: nu
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              void run();
+              if (!stopping) void run();
             }
           }}
         />
-        <Button type="submit" size="icon" className="size-11 shrink-0" disabled={busy || !input.trim()} aria-label="Embed">
-          <ArrowUp />
-        </Button>
+        {stopping ? (
+          <Button type="button" size="icon" className="size-11 shrink-0" onClick={() => void stop()} aria-label="Stop">
+            <Square />
+          </Button>
+        ) : (
+          <Button type="submit" size="icon" className="size-11 shrink-0" disabled={!input.trim()} aria-label="Embed">
+            <ArrowUp />
+          </Button>
+        )}
       </form>
     </div>
   );
@@ -124,14 +150,18 @@ function ChatPlayground({ live }: { live: boolean }) {
   const model = useStudio((s) => s.selected());
   const served = useStudio((s) => s.served);
   const flags = useStudio((s) => s.flags);
+  const progressSnap = useStudio((s) => s.progress);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ModelProgress | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const remoteBusy = modelIsBusy(progressSnap, model);
+  const stopping = busy || remoteBusy;
 
   useEffect(() => {
-    if (!busy || !model) {
+    if (!stopping || !model) {
       setProgress(null);
       return;
     }
@@ -149,11 +179,22 @@ function ChatPlayground({ live }: { live: boolean }) {
     return () => {
       stop = true;
     };
-  }, [busy, model]);
+  }, [stopping, model]);
+
+  async function halt() {
+    abortRef.current?.abort();
+    if (model) {
+      try {
+        await postStop(loadTarget(model));
+      } catch {
+        /* already gone */
+      }
+    }
+  }
 
   async function send() {
     const text = input.trim();
-    if (!text || !model || !live || busy) return;
+    if (!text || !model || !live || stopping) return;
     setInput("");
     setError(null);
     const next = [...turns, { role: "user" as const, text }];
@@ -161,6 +202,8 @@ function ChatPlayground({ live }: { live: boolean }) {
     setBusy(true);
     let assistant = "";
     let reasoning = "";
+    const ac = new AbortController();
+    abortRef.current = ac;
     const paint = (value: string, thinkText = "") =>
       setTurns([...next, { role: "assistant", text: value, thinking: thinkText || undefined }]);
     try {
@@ -173,6 +216,7 @@ function ChatPlayground({ live }: { live: boolean }) {
           max_tokens: Number(flags.maxTokens) || 512,
           stream: true,
         }),
+        signal: ac.signal,
       });
       const ctype = res.headers.get("content-type") || "";
       if (!res.ok) {
@@ -219,8 +263,10 @@ function ChatPlayground({ live }: { live: boolean }) {
         if (!msg?.content && !msg?.reasoning_content) paint("(empty)");
       }
     } catch (err) {
+      if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
       setError(err instanceof Error ? err.message : "Request failed");
     } finally {
+      if (abortRef.current === ac) abortRef.current = null;
       setBusy(false);
       setProgress(null);
     }
@@ -278,11 +324,11 @@ function ChatPlayground({ live }: { live: boolean }) {
                   {turn.text ? (
                     <p className="leading-relaxed whitespace-pre-wrap">
                       {turn.text}
-                      {busy && i === turns.length - 1 && turn.role === "assistant" ? (
+                      {stopping && i === turns.length - 1 && turn.role === "assistant" ? (
                         <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
                       ) : null}
                     </p>
-                  ) : busy && i === turns.length - 1 && turn.role === "assistant" ? (
+                  ) : stopping && i === turns.length - 1 && turn.role === "assistant" ? (
                     <span className="inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
                   ) : null}
                 </>
@@ -307,13 +353,19 @@ function ChatPlayground({ live }: { live: boolean }) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              void send();
+              if (!stopping) void send();
             }
           }}
         />
-        <Button type="submit" size="icon" className="size-11 shrink-0" disabled={busy || !input.trim()} aria-label="Send">
-          <ArrowUp />
-        </Button>
+        {stopping ? (
+          <Button type="button" size="icon" className="size-11 shrink-0" onClick={() => void halt()} aria-label="Stop">
+            <Square />
+          </Button>
+        ) : (
+          <Button type="submit" size="icon" className="size-11 shrink-0" disabled={!input.trim()} aria-label="Send">
+            <ArrowUp />
+          </Button>
+        )}
       </form>
     </div>
   );
