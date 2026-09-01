@@ -14,12 +14,15 @@ do not see an empty reply.
 from __future__ import annotations
 
 import re
+from typing import Any
 from mlx_edge.tools import (
     extract_tool_markup,
+    incomplete_special_start,
     incomplete_tool_start,
     openai_tool_call,
     parse_harmony_recipient,
     parse_tool_args,
+    normalize_minimax_text,
 )
 
 TOKEN = re.compile(r"<\|[a-zA-Z0-9_-]+\|>")
@@ -49,13 +52,13 @@ def _next_tag(buf: str) -> tuple[int, int, str, str] | None:
 
 def _incomplete_start(buf: str) -> int | None:
     match = INCOMPLETE.search(buf)
-    if not match:
-        return None
-    # Only hold a suffix — a match in the middle that is not a real tag
-    # still needs to be emitted (e.g. comparison `a < b`).
-    if match.end() != len(buf):
-        return None
-    return match.start()
+    special = incomplete_special_start(buf)
+    starts = []
+    if match and match.end() == len(buf):
+        starts.append(match.start())
+    if special is not None:
+        starts.append(special)
+    return min(starts) if starts else None
 
 
 class HarmonyFilter:
@@ -97,6 +100,7 @@ class HarmonyFilter:
         if not text:
             return "", ""
         self.buf += text
+        self.buf = normalize_minimax_text(self.buf)
         content: list[str] = []
         reasoning: list[str] = []
         while self.buf:
@@ -131,6 +135,8 @@ class HarmonyFilter:
         if self.parse_tools:
             content_s, extra = extract_tool_markup(content_s)
             self._add_tools(extra)
+            reasoning_s, extra_r = extract_tool_markup(reasoning_s)
+            self._add_tools(extra_r)
         confirmed = self.seen_think or self.seen_channel
         if self.assume and not confirmed:
             # Stream thinking live as reasoning; remember it so flush can
@@ -155,6 +161,8 @@ class HarmonyFilter:
         if self.parse_tools:
             content_s, extra = extract_tool_markup(content_s)
             self._add_tools(extra)
+            reasoning_s, extra_r = extract_tool_markup(reasoning_s)
+            self._add_tools(extra_r)
         blob = self.held + content_s + reasoning_s
         self.held = ""
         if self.assume and not self.seen_think and not self.seen_channel:
@@ -286,6 +294,20 @@ def looks_like_think(text: str) -> bool:
     return "<think>" in lower or "</think>" in lower or "<mm:think>" in lower or "</mm:think>" in lower
 
 
+def looks_like_tools(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    return (
+        "<minimax:tool_call>" in lower
+        or "</minimax:tool_call>" in lower
+        or "<tool_call>" in lower
+        or "]<]minimax" in lower
+        or "<invoke" in lower
+        or bool(re.search(r"(?<!<)invoke\s+name\s*=", lower))
+    )
+
+
 def harmony_model_name(*names: str) -> bool:
     """True when Edge should strip Harmony / MiniMax think wrappers."""
     blob = " ".join(n for n in names if n).lower()
@@ -347,7 +369,7 @@ def rewrite_message(message: dict[str, Any], assume_analysis: bool = False, pars
     raw = message.get("content")
     if not isinstance(raw, str):
         return message
-    if not looks_like_harmony(raw) and not looks_like_think(raw) and "<minimax:tool_call>" not in raw.lower() and "<tool_call>" not in raw and not assume_analysis:
+    if not looks_like_harmony(raw) and not looks_like_think(raw) and not looks_like_tools(raw) and not assume_analysis:
         return message
     filt = HarmonyFilter(assume_analysis=assume_analysis, parse_tools=parse_tools)
     content, reasoning = filt.push(raw)
