@@ -525,7 +525,6 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             body["model"] = item.model
             stream = wants_stream(body)
             pool.progress.begin(item.public_id, item.engine, stream=stream)
-            pool.mark_busy(item.public_id, True)
             job = pool.track_request(item.public_id)
             try:
                 _proxy_to(
@@ -541,8 +540,6 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 )
             finally:
                 pool.untrack_request(job)
-                pool.mark_busy(item.public_id, False)
-                pool.reheat_others(item)
 
         def _embeddings(self) -> None:
             try:
@@ -555,7 +552,6 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 return
             body["model"] = item.model
             pool.progress.begin(item.public_id, item.engine, stream=False)
-            pool.mark_busy(item.public_id, True)
             job = pool.track_request(item.public_id)
             try:
                 _proxy_to(
@@ -569,8 +565,6 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 )
             finally:
                 pool.untrack_request(job)
-                pool.mark_busy(item.public_id, False)
-                pool.reheat_others(item)
 
         def _stop(self) -> None:
             try:

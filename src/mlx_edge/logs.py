@@ -16,7 +16,7 @@ LEVEL_PROGRESS = re.compile(
 )
 LEVEL_HTTP = re.compile(r"\b(GET|POST|PUT|DELETE|PATCH|OPTIONS)\b.*\bHTTP/\d")
 
-# Keep-hot embed "ok" and chat warmup "hi" (chat template → 9 tokens).
+# Post-load embed "ok" and chat warmup "hi" (chat template → 9 tokens).
 _RE_CACHE = re.compile(r"^Prompt Cache:", re.I)
 _RE_CACHE_ROW = re.compile(r"^-\s+(assistant|user|system):", re.I)
 _RE_LOOPBACK_HTTP = re.compile(
@@ -45,7 +45,7 @@ def classify(text: str) -> str:
 
 
 def is_noise(text: str) -> bool:
-    """Drop keep-hot / warmup / cache chatter. Real client HTTP is kept."""
+    """Drop post-load warmup / cache chatter. Real client HTTP is kept."""
     line = text.strip()
     if not line:
         return True

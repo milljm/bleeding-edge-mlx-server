@@ -1,5 +1,4 @@
 import json
-import time
 import unittest
 from unittest import mock
 
@@ -33,7 +32,7 @@ class DummyProc:
 
 class PoolTests(unittest.TestCase):
     def _pool(self) -> ModelPool:
-        return ModelPool(spawn=lambda *_a, **_k: None, wait=lambda *_a, **_k: None, keep_hot=False)
+        return ModelPool(spawn=lambda *_a, **_k: None, wait=lambda *_a, **_k: None)
 
     def test_hot_load_two_models(self):
         pool = self._pool()
@@ -158,7 +157,7 @@ class PoolTests(unittest.TestCase):
             return FakeResp()
 
         with mock.patch("urllib.request.urlopen", fake_urlopen):
-            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None)
             item = pool.load("embed", "/models/Qwen3-Embedding-0.6B")
         self.assertIn("/v1/embeddings", recorded["url"])
         self.assertEqual(recorded["body"]["model"], "/models/Qwen3-Embedding-0.6B")
@@ -198,44 +197,12 @@ class PoolTests(unittest.TestCase):
             pool.load("lm", "broken")
         self.assertIn("exited with code 9", str(ctx.exception))
 
-    def test_reheat_coalesces_and_skips_busy(self):
-        with mock.patch("mlx_edge.pool.warmup_engine"), mock.patch.object(ModelPool, "_ensure_warm_worker"):
-            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
-            chat = pool.load("lm", "/m/MiniMax")
-            other = pool.load("vlm", "/m/Qwen")
-            embed = pool.load("embed", "/m/embed")
-            pool._warm_at.clear()
-            pool._warm_pending.clear()
-            pool._warming.clear()
-            pool.mark_busy(other.public_id, True)
-            for _ in range(8):
-                pool.reheat_others(embed)
-            self.assertEqual(pool._warm_pending, {chat.public_id})
-            self.assertNotIn(other.public_id, pool._warm_pending)
-            self.assertNotIn(embed.public_id, pool._warm_pending)
-
-    def test_reheat_cooldown_skips_recent(self):
-        with mock.patch("mlx_edge.pool.warmup_engine"), mock.patch.object(ModelPool, "_ensure_warm_worker"):
-            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
-            chat = pool.load("lm", "/m/MiniMax")
-            embed = pool.load("embed", "/m/embed")
-            pool._warm_pending.clear()
-            pool._warming.clear()
-            pool._warm_at[chat.public_id] = time.time()
-            pool.reheat_others(embed)
-            self.assertNotIn(chat.public_id, pool._warm_pending)
-
-    def test_mark_busy_false_sets_cooldown(self):
-        with mock.patch("mlx_edge.pool.warmup_engine"), mock.patch.object(ModelPool, "_ensure_warm_worker"):
-            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
-            chat = pool.load("lm", "/m/MiniMax")
-            embed = pool.load("embed", "/m/embed")
-            pool._warm_at.clear()
-            pool._warm_pending.clear()
-            pool.mark_busy(chat.public_id, True)
-            pool.mark_busy(chat.public_id, False)
-            pool.reheat_others(embed)
-            self.assertNotIn(chat.public_id, pool._warm_pending)
+    def test_load_warms_once(self):
+        with mock.patch("mlx_edge.pool.warmup_engine") as warm:
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None)
+            pool.load("lm", "/m/Qwen")
+            pool.load("embed", "/m/embed")
+            self.assertEqual(warm.call_count, 2)
 
     def test_load_error_hints_build_help(self):
         msg = annotate_load_error("MiniMax-M3 exited with code 1")
@@ -245,8 +212,8 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(again.count("mlx-edge build"), 1)
 
     def test_stop_generation_triggers_inflight(self):
-        with mock.patch("mlx_edge.pool.warmup_engine"), mock.patch.object(ModelPool, "_ensure_warm_worker"):
-            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None, keep_hot=False)
+        with mock.patch("mlx_edge.pool.warmup_engine"):
+            pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None)
             chat = pool.load("lm", "/m/MiniMax")
             closed = []
             job = pool.track_request(chat.public_id)
