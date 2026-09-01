@@ -46,7 +46,7 @@ basename (any case), `org/name`, or the path.
 - `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id).
   `engine` is `lm` | `vlm` | `embed`. After the child is healthy, Edge sends a
   1-token warmup (or a tiny embed) so Metal graphs are compiled before the
-  first real request.
+  first real request. After that the child sits idle until a client hits it.
 - `POST /v1/unload` — unload `{model}`
 - `POST /v1/stop` — abort in-flight chat/embed for `{model}` (omit `model` to stop
   every busy engine). Closes the child so mlx-lm actually stops generating.
@@ -163,17 +163,8 @@ processes. The extra seconds you see on the first token after a switch are:
    in LM Studio too on a long prompt
 
 RAG should Serve the embedding model **and** the chat model. Embeddings run in
-their own process and stay warm (12s heartbeat). After embed, Edge re-warms the
-chat graphs in the background so the RAG hop is not a cold Metal switch. The
-RAG round-trip (embed → retrieve → chat with a longer prompt) is extra work
-in your client, not an Edge unload.
-
-## Keep-hot embeddings
-
-Embedding children get a 12s heartbeat so RAG does not hit a cold Metal
-graph. After an embeddings request, Edge warms loaded chat models in the
-background (overlaps retrieval). After chat, it re-warms the embedding
-model. llm → llm was already fast after the post-load warmup.
+their own process. The RAG round-trip (embed → retrieve → chat with a longer
+prompt) is extra work in your client, not an Edge unload.
 
 ## Examples
 

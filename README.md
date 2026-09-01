@@ -175,7 +175,7 @@ mlx-edge serve --engine lm --model mlx-community/Qwen3-8B-4bit
 
 ## Docs
 
-- [HTTP API](docs/api.md) — `/v1` endpoints, progress, chat templates, thinking tags, keep-hot embeddings
+- [HTTP API](docs/api.md) — `/v1` endpoints, progress, chat templates, thinking tags
 - [Contributing](CONTRIBUTING.md) — GUI rebuild (`npm run build:gui`), tests, conda-forge recipe
 
 `mlx-edge doctor` checks Darwin/arm64, `CONDA_DEFAULT_ENV`, git, Metal via

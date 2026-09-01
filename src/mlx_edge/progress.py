@@ -349,7 +349,7 @@ class ProgressTracker:
                 self._bump()
                 return
             if not row.get("in_flight"):
-                # Keep-hot / warmup hits the child directly. Those logs must
+                # Post-load warmup hits the child directly. Those logs must
                 # not look like a user generation (stuck "generating" / green
                 # embed dot).
                 return

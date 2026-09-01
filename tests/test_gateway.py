@@ -12,7 +12,7 @@ from mlx_edge.pool import ModelPool, free_port, strip_bind_args
 
 class GatewayTests(unittest.TestCase):
     def setUp(self):
-        self.pool = ModelPool(spawn=lambda *_a, **_k: None, wait=lambda _port: None, keep_hot=False)
+        self.pool = ModelPool(spawn=lambda *_a, **_k: None, wait=lambda _port: None)
         self.port = free_port()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", self.port), make_handler(self.pool))
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)

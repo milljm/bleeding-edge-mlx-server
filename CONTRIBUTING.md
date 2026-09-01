@@ -33,7 +33,7 @@ Commit both the source and the rebuilt `web/` files.
 ## Docs
 
 `README.md` is the product page. Long API notes (endpoints, progress JSON,
-thinking tags, keep-hot) live in `docs/api.md` — do not pile them back into
+thinking tags) live in `docs/api.md` — do not pile them back into
 the README.
 
 ## Recipe

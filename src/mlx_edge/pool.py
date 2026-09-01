@@ -21,10 +21,6 @@ from mlx_edge.progress import ProgressTracker
 from mlx_edge.scan import context_window
 from mlx_edge.templates import template_for_spawn
 
-# After a real request the graphs are hot. Don't immediately 1-token-warm them.
-REHEAT_COOLDOWN = 20.0
-KEEP_HOT_INTERVAL = 30.0
-
 
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -210,7 +206,10 @@ def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> su
 
 
 def warmup_engine(item: LoadedModel, timeout: float = 120.0) -> None:
-    """Compile Metal graphs so the first real request is not a cold start."""
+    """One 1-token (or tiny embed) request after Serve so Metal graphs compile.
+
+    The child then sits idle until a real client request. No heartbeat.
+    """
     if item.engine == "embed":
         payload: dict[str, object] = {"model": item.model, "input": "ok"}
         path = "/v1/embeddings"
@@ -270,23 +269,12 @@ class ModelPool:
         wait: Callable[..., None] | None = None,
         progress: ProgressTracker | None = None,
         logs: LogBuffer | None = None,
-        keep_hot: bool = True,
     ) -> None:
         self._models: dict[str, LoadedModel] = {}
         self._spawn = spawn or default_spawn
         self._wait = wait or wait_healthy
         self.progress = progress or ProgressTracker()
         self.logs = logs or LogBuffer()
-        self._keep_hot = keep_hot
-        self._hot_stop = threading.Event()
-        self._hot_thread: threading.Thread | None = None
-        self._busy: set[str] = set()
-        self._warm_at: dict[str, float] = {}
-        self._warming: set[str] = set()
-        self._warm_pending: set[str] = set()
-        self._warm_lock = threading.Lock()
-        self._warm_cv = threading.Condition(self._warm_lock)
-        self._warm_thread: threading.Thread | None = None
         self._inflight: dict[str, Inflight] = {}
         self._inflight_lock = threading.Lock()
 
@@ -341,9 +329,6 @@ class ModelPool:
         self.progress.end_load(item.public_id)
         if proc is not None:
             warmup_engine(item)
-            self._warm_at[item.public_id] = time.time()
-            if engine == "embed":
-                self._ensure_keep_hot()
         self._models[item.id] = item
         return item
 
@@ -384,15 +369,6 @@ class ModelPool:
         except TypeError:
             self._wait(port)
 
-    def mark_busy(self, name: str, busy: bool) -> None:
-        item = self.resolve(name)
-        key = item.public_id if item else name
-        if busy:
-            self._busy.add(key)
-        else:
-            self._busy.discard(key)
-            self._warm_at[key] = time.time()
-
     def track_request(self, name: str) -> Inflight:
         item = self.resolve(name)
         key = item.public_id if item else name
@@ -430,82 +406,6 @@ class ModelPool:
                 stopped.append(job.model_id)
         return stopped
 
-    def _queue_warm(self, item: LoadedModel) -> bool:
-        """At most one pending warmup per model. Skip busy / in-flight / cooldown."""
-        if item.proc is None:
-            return False
-        key = item.public_id
-        with self._warm_lock:
-            if key in self._busy or key in self._warming or key in self._warm_pending:
-                return False
-            last = self._warm_at.get(key, 0.0)
-            if time.time() - last < REHEAT_COOLDOWN:
-                return False
-            self._warm_pending.add(key)
-            self._warm_cv.notify()
-        self._ensure_warm_worker()
-        return True
-
-    def _ensure_warm_worker(self) -> None:
-        with self._warm_lock:
-            if self._warm_thread is not None:
-                return
-            self._warm_thread = threading.Thread(target=self._warm_loop, name="mlx-edge-warm", daemon=True)
-            self._warm_thread.start()
-
-    def _warm_loop(self) -> None:
-        while not self._hot_stop.is_set():
-            key = None
-            with self._warm_cv:
-                if not self._warm_pending:
-                    self._warm_cv.wait(timeout=1.0)
-                if self._warm_pending:
-                    key = next(iter(self._warm_pending))
-                    self._warm_pending.discard(key)
-                    self._warming.add(key)
-            if not key:
-                continue
-            item = self.resolve(key)
-            try:
-                if item is not None and item.proc is not None and item.public_id not in self._busy:
-                    timeout = 15.0 if item.engine == "embed" else 45.0
-                    warmup_engine(item, timeout=timeout)
-                    self._warm_at[item.public_id] = time.time()
-            finally:
-                with self._warm_lock:
-                    self._warming.discard(key)
-
-    def reheat_others(self, item: LoadedModel) -> None:
-        """After embeddings, warm chat graphs; after chat, keep embeddings hot.
-
-        One worker, one pending slot per model, 20s cooldown. Rapid RAG embeds
-        used to spawn a thread each and stack 1-token VL requests (in_flight=11).
-        """
-        if item.proc is None:
-            return
-        want_embed = item.engine != "embed"
-        for other in self.list():
-            if other.id == item.id or other.proc is None:
-                continue
-            if want_embed and other.engine == "embed":
-                self._queue_warm(other)
-            elif not want_embed and other.engine != "embed":
-                self._queue_warm(other)
-
-    def _ensure_keep_hot(self) -> None:
-        if not self._keep_hot or self._hot_thread is not None:
-            return
-
-        def loop() -> None:
-            while not self._hot_stop.wait(KEEP_HOT_INTERVAL):
-                for item in self.list():
-                    if item.engine != "embed" or item.proc is None:
-                        continue
-                    self._queue_warm(item)
-
-        self._hot_thread = threading.Thread(target=loop, name="mlx-edge-keep-hot", daemon=True)
-        self._hot_thread.start()
-
     def unload(self, name: str) -> LoadedModel | None:
         item = self.resolve(name)
         if not item:
@@ -513,18 +413,10 @@ class ModelPool:
         self._models.pop(item.id, None)
         self.progress.drop(item.public_id)
         self.stop_generation(item.public_id)
-        with self._warm_lock:
-            self._busy.discard(item.public_id)
-            self._warming.discard(item.public_id)
-            self._warm_pending.discard(item.public_id)
-            self._warm_at.pop(item.public_id, None)
         self._kill(item)
         return item
 
     def unload_all(self) -> None:
-        self._hot_stop.set()
-        with self._warm_cv:
-            self._warm_cv.notify_all()
         for key in list(self._models):
             self.unload(key)
 
