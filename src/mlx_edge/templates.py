@@ -217,7 +217,10 @@ def fetch_template(model_path: str, repo: str | None = None) -> dict[str, Any]:
 
 
 def template_for_spawn(model_path: str, extra: list[str]) -> list[str]:
-    """If mlx-lm / mlx-vlm would have no think-capable template, inject --chat-template."""
+    """If mlx-lm would have no think-capable template, inject --chat-template.
+
+    mlx-vlm.server has no ``--chat-template`` flag — do not call this for ``vlm``.
+    """
     if any(arg == "--chat-template" or arg.startswith("--chat-template=") for arg in extra):
         return extra
     path = Path(os.path.expanduser(model_path))

@@ -139,7 +139,11 @@ MiniMax-M2.7 and MiniMax-M3 Hugging Face templates wrap thinking in
 **prompt**, so the first generated tokens are thinking. ConfigI and gpt-oss
 use Harmony `<|channel|>` tokens instead.
 
-On Serve, if the folder has no template, Edge pulls one from Hugging Face.
+On Serve, if the folder has no template, Edge pulls one from Hugging Face
+and passes `--chat-template` to **mlx-lm.server**. mlx-vlm.server has no
+`--chat-template` / `--temp` / `--top-p` / `--prompt-cache-size` — sampling
+is on the request, thinking is `--enable-thinking`, and Advanced flags can
+preload extra image / speech / embed / reranker models onto that same child.
 Harmony is only injected as a fallback for gpt-oss / ConfigI names — not for
 generic MiniMax-M2.7 / M3 (those would start in the wrong dialect and yield
 empty `content`). Settings → Chat template lets you paste Jinja or **Pull from

@@ -89,9 +89,17 @@ export function FlagPanel() {
           This is an embedding model. Serve it, then POST <span className="font-mono text-foreground">/v1/embeddings</span>.
           Keep a chat model loaded too — RAG does not unload it.
         </p>
+      ) : model.engine === "vlm" ? (
+        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
+          mlx-vlm.server has no <span className="font-mono text-foreground">--temp</span> /{" "}
+          <span className="font-mono text-foreground">--top-p</span> /{" "}
+          <span className="font-mono text-foreground">--prompt-cache-size</span> — those are mlx-lm
+          defaults. Send sampling on the request. Advanced flags can preload extra image / speech /
+          embed / reranker models onto this same server; they are not the vision tower of the VLM you Served.
+        </p>
       ) : null}
       <EngineCard />
-      {model.engine !== "embed" ? <TemplateCard /> : null}
+      {model.engine === "lm" ? <TemplateCard /> : null}
       {groups.map((group) => {
         const defs = visible.filter((d) => (d.group ?? "server") === group);
         if (defs.length === 0) return null;
@@ -205,13 +213,9 @@ function TemplateCard() {
         <div>
           <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Chat template</h3>
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-            {model.engine === "vlm"
-              ? bundled
-                ? "This VLM already has a processor chat_template. mlx-vlm will apply it. Thinking is a separate switch below."
-                : "VLMs use the processor chat template the same way mlx-lm uses the tokenizer one. Edge pulls from Hugging Face on Serve when missing. MiniMax-M3 uses <mm:think> / <think>. A Jinja override is passed as --chat-template (needs a current mlx-vlm — mlx-edge build --help)."
-              : bundled
-                ? "This checkpoint already has a tokenizer chat_template. mlx-lm will apply it."
-                : "No chat_template in this checkpoint. Edge pulls one from Hugging Face on Serve. MiniMax-M2 / M2.7 open <think> in the generation prompt so tokens stream; ConfigI / gpt-oss use Harmony <|channel|>."}
+            {bundled
+              ? "This checkpoint already has a tokenizer chat_template. mlx-lm will apply it."
+              : "No chat_template in this checkpoint. Edge pulls one from Hugging Face on Serve. MiniMax-M2 / M2.7 open <think> in the generation prompt so tokens stream; ConfigI / gpt-oss use Harmony <|channel|>."}
           </p>
         </div>
         <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void pull()}>
