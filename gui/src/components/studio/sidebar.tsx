@@ -76,7 +76,7 @@ export function Sidebar({
   }
 
   const emptyHint = !watchDirs.length
-    ? "Add a folder to watch, or the Hugging Face cache. MLX-Edge lists checkpoints it finds (config.json + weights)."
+    ? "Add a folder to watch, or Hugging Face / LM Studio / Ollama. MLX-Edge lists checkpoints it finds (config.json + weights)."
     : scanning
       ? "Scanning folders…"
       : "No models in these folders. Point at a directory that contains MLX checkpoints.";
@@ -646,7 +646,7 @@ function HubPanel() {
               .
             </>
           ) : (
-            "Paste a Hub URL or org/name. Dropdown lists MLX quants (not the PyTorch dump)."
+            "Paste a Hub URL or org/name. Dropdown lists MLX quants."
           )}
         </p>
       )}

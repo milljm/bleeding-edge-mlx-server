@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, CircleStop, Copy, Menu, PanelLeft, RefreshCw, X } from "lucide-react";
+import { Check, CircleStop, Copy, ExternalLink, Menu, PanelLeft, RefreshCw, X } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { EndpointPanel } from "@/components/studio/endpoint";
 import { FlagPanel } from "@/components/studio/flag-panel";
@@ -14,7 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { getPrefs, modelIsBusy, modelIsLive, postStop, subscribeProgress } from "@/lib/edge-api";
 import { flagsDirty } from "@/lib/flags";
 import { engineLabel, loadedSummary } from "@/lib/command";
-import { loadTarget } from "@/lib/models";
+import { loadTarget, modelCardLink } from "@/lib/models";
 import { useStudio, type StudioTab } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +44,7 @@ export function AppShell() {
   const loadingThis = Boolean(model && loadingIds.includes(model.id));
   const failedThis = model ? failed[model.id] : undefined;
   const generating = modelIsBusy(progress, model);
+  const card = model ? modelCardLink(model) : null;
 
   async function onReload() {
     if (loadingThis || !live) return;
@@ -220,6 +221,17 @@ export function AppShell() {
                 <TabsTrigger value="playground">Playground</TabsTrigger>
                 <TabsTrigger value="endpoint">Endpoint</TabsTrigger>
                 <TabsTrigger value="logging">Logging</TabsTrigger>
+                {card ? (
+                  <a
+                    href={card.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  >
+                    Model Card
+                    <ExternalLink className="size-3.5" />
+                  </a>
+                ) : null}
               </TabsList>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
