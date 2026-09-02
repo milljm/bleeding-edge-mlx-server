@@ -12,7 +12,7 @@ from typing import Any
 MAX_TURNS = 200
 
 
-def _clean_turn(raw: Any) -> dict[str, str] | None:
+def _clean_turn(raw: Any) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         return None
     role = str(raw.get("role") or "").strip()
@@ -20,23 +20,45 @@ def _clean_turn(raw: Any) -> dict[str, str] | None:
         return None
     text = str(raw.get("text") or "")
     thinking = str(raw.get("thinking") or "")
-    out: dict[str, str] = {"role": role, "text": text}
+    out: dict[str, Any] = {"role": role, "text": text}
     if thinking:
         out["thinking"] = thinking
+    metrics = _clean_metrics(raw.get("metrics"))
+    if metrics:
+        out["metrics"] = metrics
     return out
+
+
+def _clean_metrics(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key in ("ttft", "gen", "tps"):
+        try:
+            out[key] = float(raw[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+    try:
+        out["tokens"] = int(raw["tokens"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    model = str(raw.get("model") or "").strip()
+    if model:
+        out["model"] = model
+    return out or None
 
 
 class PlaygroundStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._turns: list[dict[str, str]] = []
+        self._turns: list[dict[str, Any]] = []
 
-    def get(self) -> list[dict[str, str]]:
+    def get(self) -> list[dict[str, Any]]:
         with self._lock:
             return list(self._turns)
 
-    def put(self, turns: list[Any]) -> list[dict[str, str]]:
-        cleaned: list[dict[str, str]] = []
+    def put(self, turns: list[Any]) -> list[dict[str, Any]]:
+        cleaned: list[dict[str, Any]] = []
         for item in turns:
             row = _clean_turn(item)
             if row is None:

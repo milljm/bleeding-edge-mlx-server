@@ -163,7 +163,20 @@ export async function postStop(model?: string) {
   return parseJson(res);
 }
 
-export type PlaygroundTurn = { role: "user" | "assistant"; text: string; thinking?: string };
+export type PlaygroundMetrics = {
+  ttft: number;
+  gen: number;
+  tokens: number;
+  tps: number;
+  model: string;
+};
+
+export type PlaygroundTurn = {
+  role: "user" | "assistant";
+  text: string;
+  thinking?: string;
+  metrics?: PlaygroundMetrics;
+};
 
 export async function getPlayground(): Promise<PlaygroundTurn[]> {
   const res = await fetch("/v1/playground");
@@ -510,4 +523,11 @@ export function deltaReasoning(payload: unknown): string {
   if (typeof delta === "string") return delta;
   const message = choice?.message?.reasoning_content;
   return typeof message === "string" ? message : "";
+}
+
+export function deltaCompletionTokens(payload: unknown): number {
+  if (!payload || typeof payload !== "object") return 0;
+  const usage = (payload as { usage?: { completion_tokens?: unknown } }).usage;
+  const n = Number(usage?.completion_tokens);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }

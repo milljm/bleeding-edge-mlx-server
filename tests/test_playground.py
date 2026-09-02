@@ -30,3 +30,19 @@ class PlaygroundStoreTests(unittest.TestCase):
         store.put([{"role": "user", "text": "x"}])
         store.put([])
         self.assertEqual(store.get(), [])
+
+    def test_keeps_metrics(self):
+        store = PlaygroundStore()
+        saved = store.put(
+            [
+                {"role": "user", "text": "hi"},
+                {
+                    "role": "assistant",
+                    "text": "hello",
+                    "metrics": {"ttft": 1.25, "gen": 2.5, "tokens": 40, "tps": 16.0, "model": "Qwen3-8B-4bit"},
+                },
+            ],
+        )
+        self.assertEqual(saved[1]["metrics"]["tokens"], 40)
+        self.assertEqual(saved[1]["metrics"]["model"], "Qwen3-8B-4bit")
+        self.assertAlmostEqual(saved[1]["metrics"]["ttft"], 1.25)
