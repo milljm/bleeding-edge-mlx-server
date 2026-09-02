@@ -4,7 +4,7 @@ import { ChevronRight, CircleStop, Folder, PanelLeft, Play, Plus, RefreshCw, Sea
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatContext, DIR_PLACEHOLDER, loadTarget, sortLoadedFirst, type ModelRec } from "@/lib/models";
+import { formatContext, DIR_PLACEHOLDER, SUGGESTED_WATCH, loadTarget, sortLoadedFirst, type ModelRec } from "@/lib/models";
 import {
   modelGeneration,
   modelIsBusy,
@@ -66,7 +66,7 @@ export function Sidebar({
   }
 
   const emptyHint = !watchDirs.length
-    ? "Add a folder to watch. Edge lists MLX models it finds (config.json + weights)."
+    ? "Add a folder to watch, or the Hugging Face cache. MLX-Edge lists checkpoints it finds (config.json + weights)."
     : scanning
       ? "Scanning folders…"
       : "No models in these folders. Point at a directory that contains MLX checkpoints.";
@@ -116,6 +116,20 @@ export function Sidebar({
             <RefreshCw className={cn(scanning && "animate-spin")} />
           </Button>
         </form>
+        {SUGGESTED_WATCH.some((s) => !watchDirs.includes(s.path)) ? (
+          <div className="mt-2 flex flex-wrap gap-1.5 px-4">
+            {SUGGESTED_WATCH.filter((s) => !watchDirs.includes(s.path)).map((s) => (
+              <button
+                key={s.path}
+                type="button"
+                className="rounded-full border border-border bg-background px-2.5 py-1 text-[11px] text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+                onClick={() => void addWatchDir(s.path)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <ul className="mt-2 space-y-1 px-3 pb-3">
           {watchDirs.map((dir) => (
             <li

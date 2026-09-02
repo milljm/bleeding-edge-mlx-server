@@ -181,6 +181,23 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(rec["path"], str(snap))
             self.assertEqual(rec["engine"], "lm")
 
+    def test_hub_skips_datasets_and_spaces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--mlx-community--Qwen3-8B-4bit"
+            snap = hub / "snapshots" / "abc"
+            _write_model(snap)
+            (hub / "refs").mkdir()
+            (hub / "refs" / "main").write_text("abc", encoding="utf-8")
+            (hub / "blobs").mkdir()
+            data = root / "datasets--someone--stuff"
+            data_snap = data / "snapshots" / "def"
+            _write_model(data_snap)
+            (data / "refs").mkdir()
+            (data / "blobs").mkdir()
+            models = list_models(str(root))
+            self.assertEqual([m["repo"] for m in models], ["mlx-community/Qwen3-8B-4bit"])
+
     def test_minimax_m3_vl_scans_as_lm(self):
         """minimax_m3_vl looks VL but runs text-only on patched mlx-lm."""
         with tempfile.TemporaryDirectory() as tmp:

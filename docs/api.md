@@ -76,7 +76,10 @@ basename (any case), `org/name`, or the path.
   every busy engine). Closes the child so mlx-lm actually stops generating.
   A remote OpenAI client that drops the stream is observed the same way —
   Edge cancels the child and the generating pulse clears. Alias: `/v1/chat/stop`.
-- `POST /v1/scan` — `{dirs: […]}` → local MLX checkpoints (`config.json` + weights)
+- `POST /v1/scan` — `{dirs: […]}` → local MLX checkpoints (`config.json` + weights).
+  Hugging Face hub layout (`models--org--name/snapshots/…`) is understood, so
+  `~/.cache/huggingface/hub` works as a watch dir. `datasets--` / `spaces--`
+  entries are skipped.
 - `GET /health` — `{status, models, host, port, bind, url}`
 
 ## Progress

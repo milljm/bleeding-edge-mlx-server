@@ -191,6 +191,8 @@ def _walk(root: Path, current: Path, typed_dir: str, depth: int, found: list[dic
             continue
         if child.name in SKIP_DIRS or child.name.startswith("."):
             continue
+        if child.name.startswith(("datasets--", "spaces--")):
+            continue
         rec = _describe(child, root, typed_dir)
         if rec:
             found.append(rec)

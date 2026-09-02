@@ -19,7 +19,15 @@ export type ModelRec = {
 /** Common watch path (LM Studio). Kept as-is — never treated as a wipe sentinel. */
 export const LEGACY_DEFAULT_WATCH = "~/.lmstudio/models";
 
-export const DIR_PLACEHOLDER = "/path/to/models";
+/** Default Hugging Face hub cache — mlx-lm / mlx-vlm download here. */
+export const HF_HUB_WATCH = "~/.cache/huggingface/hub";
+
+export const DIR_PLACEHOLDER = "~/.cache/huggingface/hub";
+
+export const SUGGESTED_WATCH: { label: string; path: string }[] = [
+  { label: "Hugging Face cache", path: HF_HUB_WATCH },
+  { label: "LM Studio", path: LEGACY_DEFAULT_WATCH },
+];
 
 export function migrateWatchDirs(dirs?: string[] | null): string[] {
   if (!dirs || dirs.length === 0) return [];
