@@ -366,16 +366,6 @@ export const FLAG_DEFS: FlagDef[] = [
     advanced: true,
     default: "",
   },
-  {
-    key: "apiKey",
-    flag: "--api-key",
-    label: "API key",
-    help: "Optional bearer token mlx-vlm.server requires (MLX_VLM_SERVER_API_KEY). mlx-lm.server has no --api-key.",
-    type: "text",
-    engines: ["vlm", "embed"],
-    advanced: true,
-    default: "",
-  },
 ];
 
 export type FlagValues = Record<string, string | number | boolean>;
