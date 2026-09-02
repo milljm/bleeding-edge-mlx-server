@@ -228,6 +228,46 @@ class HubTests(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", return_value=Resp()):
             self.assertEqual(repo_nbytes("mlx-community/Toy-4bit"), 4_000_000)
 
+    def test_repo_nbytes_keeps_slash_and_used_storage(self):
+        seen: list[str] = []
+
+        def fake_open(req, timeout=12):
+            seen.append(req.full_url)
+
+            class Resp:
+                def read(self):
+                    return json.dumps({"siblings": [{"size": 10}], "usedStorage": 99}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            return Resp()
+
+        with mock.patch("urllib.request.urlopen", fake_open):
+            n = repo_nbytes("mlx-community/gemma-4-e2b-it-4bit")
+        self.assertEqual(n, 10)
+        self.assertTrue(any("mlx-community/gemma-4-e2b-it-4bit?blobs=true" in url for url in seen))
+        self.assertFalse(any("%2F" in url for url in seen))
+
+        def storage_only(req, timeout=12):
+            class Resp:
+                def read(self):
+                    return json.dumps({"siblings": [], "usedStorage": 7163942076}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            return Resp()
+
+        with mock.patch("urllib.request.urlopen", storage_only):
+            self.assertEqual(repo_nbytes("mlx-community/gemma-4-e2b-it-4bit"), 7163942076)
+
     def test_two_downloads_no_duplicate(self):
         a, b = LiveProc(), LiveProc()
 

@@ -239,29 +239,43 @@ def hub_dir_incomplete(hub_dir: Path) -> bool:
 
 
 def repo_nbytes(repo: str) -> int:
-    url = f"{HF_API}/{urllib.parse.quote(repo, safe='')}?blobs=true"
+    """Hub file sizes. Keep the slash in org/name — %2F 404s and we used to log 'size unknown'."""
+    data = _hub_json(f"{HF_API}/{urllib.parse.quote(repo, safe='/')}?blobs=true")
+    total = _siblings_nbytes(data)
+    if total:
+        return total
+    if not data:
+        data = _hub_json(f"{HF_API}/{urllib.parse.quote(repo, safe='/')}") or {}
+        total = _siblings_nbytes(data)
+        if total:
+            return total
+    try:
+        stored = int((data or {}).get("usedStorage") or 0)
+    except (TypeError, ValueError):
+        stored = 0
+    if stored:
+        return stored
+    tree = _hub_json(
+        f"https://huggingface.co/api/models/{urllib.parse.quote(repo, safe='/')}/tree/main?recursive=true"
+    )
+    if isinstance(tree, list):
+        return sum(_entry_size(row) for row in tree if isinstance(row, dict) and row.get("type") != "directory")
+    return 0
+
+
+def _hub_json(url: str) -> Any:
     req = urllib.request.Request(url, headers=hf_headers())
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-        data = {}
-    total = 0
-    for sib in (data.get("siblings") or []) if isinstance(data, dict) else []:
-        if isinstance(sib, dict):
-            total += _entry_size(sib)
-    if total:
-        return total
-    tree = f"https://huggingface.co/api/models/{urllib.parse.quote(repo, safe='')}/tree/main?recursive=true"
-    req = urllib.request.Request(tree, headers=hf_headers())
-    try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            rows = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _siblings_nbytes(data: Any) -> int:
+    if not isinstance(data, dict):
         return 0
-    if not isinstance(rows, list):
-        return 0
-    return sum(_entry_size(row) for row in rows if isinstance(row, dict) and row.get("type") != "directory")
+    return sum(_entry_size(sib) for sib in (data.get("siblings") or []) if isinstance(sib, dict))
 
 
 def _entry_size(row: dict[str, Any]) -> int:
