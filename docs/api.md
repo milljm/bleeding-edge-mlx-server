@@ -85,7 +85,8 @@ basename (any case), `org/name`, or the path.
   `config.json` is an istftnet dump with none of those — skipped.
   mlx-community conversions are kept. Encoder-only checkpoints (`clip`, `siglip`,
   `vit`) are skipped — mlx-vlm has no Serve path (it looks for a speculative
-  drafter). `datasets--` / `spaces--` / `blobs` / `refs` are skipped.
+  drafter). 1-bit quants are skipped (mlx supports 2/3/4/5/6/8).
+  `datasets--` / `spaces--` / `blobs` / `refs` are skipped.
 - `GET /health` — `{status, models, host, port, bind, url}`
 
 ## Progress

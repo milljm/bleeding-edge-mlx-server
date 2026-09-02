@@ -1,5 +1,7 @@
+import io
 import json
 import unittest
+import urllib.error
 from unittest import mock
 
 from mlx_edge.pool import (
@@ -196,6 +198,30 @@ class PoolTests(unittest.TestCase):
         self.assertIn("/v1/embeddings", recorded["url"])
         self.assertEqual(recorded["body"]["model"], "/models/Qwen3-Embedding-0.6B")
         self.assertEqual(item.engine, "embed")
+
+    def test_warmup_http_error_unloads(self):
+        def fake_urlopen(req, timeout=None):
+            raise urllib.error.HTTPError(
+                req.full_url,
+                400,
+                "Bad Request",
+                hdrs=None,
+                fp=io.BytesIO(b'{"detail":"1 bit is not supported"}'),
+            )
+
+        killed: list[str] = []
+
+        class Live(DummyProc):
+            def terminate(self):
+                killed.append("term")
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            pool = ModelPool(spawn=lambda *_a, **_k: Live(), wait=lambda *_a, **_k: None)
+            with self.assertRaises(RuntimeError) as ctx:
+                pool.load("lm", "/models/Bonsai-4B-mlx-1bit")
+        self.assertIn("warmup", str(ctx.exception).lower())
+        self.assertEqual(pool.list(), [])
+        self.assertEqual(killed, ["term"])
 
     def test_load_does_not_fetch_template_for_hub_id(self):
         with mock.patch("mlx_edge.pool.template_for_spawn", side_effect=lambda model, extra: extra) as tmpl:
