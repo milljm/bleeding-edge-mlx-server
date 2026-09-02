@@ -185,7 +185,7 @@ class ScanTests(unittest.TestCase):
         """HF hub stores snapshot files as symlinks into blobs/. Kokoro is .pth."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            hub = root / "models--hexgrad--Kokoro-82M"
+            hub = root / "models--mlx-community--Kokoro-82M-bf16"
             snap = hub / "snapshots" / "deadbeef"
             blob = hub / "blobs" / "aaa"
             snap.mkdir(parents=True)
@@ -196,10 +196,59 @@ class ScanTests(unittest.TestCase):
             (hub / "refs").mkdir()
             (hub / "refs" / "main").write_text("deadbeef", encoding="utf-8")
             models = {m["repo"]: m for m in list_models(str(root))}
-            self.assertIn("hexgrad/Kokoro-82M", models)
-            self.assertEqual(models["hexgrad/Kokoro-82M"]["engine"], "tts")
-            self.assertEqual(models["hexgrad/Kokoro-82M"]["path"], str(snap))
-            self.assertNotEqual(models["hexgrad/Kokoro-82M"]["size"], "—")
+            self.assertIn("mlx-community/Kokoro-82M-bf16", models)
+            self.assertEqual(models["mlx-community/Kokoro-82M-bf16"]["engine"], "tts")
+            self.assertEqual(models["mlx-community/Kokoro-82M-bf16"]["path"], str(snap))
+            self.assertNotEqual(models["mlx-community/Kokoro-82M-bf16"]["size"], "—")
+
+    def test_hub_snapshot_without_config_is_skipped(self):
+        """Original Hub dumps (hexgrad/Kokoro, ResembleAI/chatterbox) have weights and no config."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--hexgrad--Kokoro-82M"
+            snap = hub / "snapshots" / "abc"
+            snap.mkdir(parents=True)
+            (snap / "kokoro-v1_0.pth").write_bytes(b"w" * 64)
+            (hub / "blobs").mkdir()
+            (hub / "refs").mkdir()
+            self.assertEqual(list_models(str(root)), [])
+
+    def test_hub_kokoro_config_without_model_type_is_skipped(self):
+        """hexgrad Kokoro ships istftnet/plbert config — mlx-audio cannot type it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--hexgrad--Kokoro-82M"
+            snap = hub / "snapshots" / "f3ff3571"
+            snap.mkdir(parents=True)
+            (snap / "config.json").write_text(
+                json.dumps({"istftnet": {"upsample_rates": [10, 6]}, "hidden_dim": 512, "vocab": {"a": 43}}),
+                encoding="utf-8",
+            )
+            (snap / "kokoro-v1_0.pth").write_bytes(b"w" * 64)
+            (hub / "blobs").mkdir()
+            (hub / "refs").mkdir()
+            self.assertEqual(list_models(str(root)), [])
+
+    def test_clip_encoder_is_not_listed(self):
+        """openai/clip-vit is a dual encoder. mlx-vlm has no Serve path for it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--openai--clip-vit-large-patch14"
+            snap = hub / "snapshots" / "abc"
+            snap.mkdir(parents=True)
+            (snap / "config.json").write_text(
+                json.dumps({
+                    "model_type": "clip",
+                    "architectures": ["CLIPModel"],
+                    "vision_config": {"hidden_size": 1024},
+                    "text_config": {"hidden_size": 768},
+                }),
+                encoding="utf-8",
+            )
+            (snap / "model.safetensors").write_bytes(b"w")
+            (hub / "blobs").mkdir()
+            (hub / "refs").mkdir()
+            self.assertEqual(list_models(str(root)), [])
 
     def test_hub_diffusers_model_index(self):
         with tempfile.TemporaryDirectory() as tmp:

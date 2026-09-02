@@ -35,7 +35,8 @@ Apple Silicon wheels, not a CUDA Stable Diffusion stack) and `mlx-audio`
 (`mlx_vlm.server --tts-model` / `--stt-model`). Overlay a PR with
 `mlx-edge build mlx-audio#N` the same way as mlx-vlm. TTS still needs an
 **MLX** checkpoint (`mlx-community/Kokoro-*`, `mlx-community/chatterbox-fp16`)
-— `ResembleAI/chatterbox` on the Hub is PyTorch and has no `config.json`.
+— `hexgrad/Kokoro-82M` and `ResembleAI/chatterbox` on the Hub are PyTorch dumps
+(no typed `config.json`) and will not list after a rescan.
 
 `edge-gui` starts the gateway **and** the studio on the same host/port, then
 opens a browser. The footer shows the OpenAI base URL:

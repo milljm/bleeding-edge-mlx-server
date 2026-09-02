@@ -36,6 +36,21 @@ HUB_INTERNALS = {"blobs", "refs", "snapshots"}
 # (`minimax_m3_vl`) ships a vision tower mlx-lm ignores; the working loader is
 # patched mlx-lm (`mlx-edge build`), not mlx-vlm.
 LM_MODEL_TYPES = ("minimax_m3_vl",)
+# Dual/vision encoders. mlx-vlm treats `clip` as a speculative drafter
+# (`mlx_vlm.speculative.drafters.clip`) and embeddings only load
+# qwen3/gemma/xlm-roberta. Listing them as vlm/embed just fails on Serve.
+ENCODER_ONLY_TYPES = (
+    "clip",
+    "chinese_clip",
+    "siglip",
+    "siglip2",
+    "open_clip",
+    "blip",
+    "blip_2",
+    "vit",
+    "dinov2",
+    "dino",
+)
 VLM_MARKERS = (
     "vision",
     "vlm",
@@ -277,15 +292,33 @@ def _has_chat_template(path: Path) -> bool:
 def _is_model_dir(path: Path) -> bool:
     if path.name in HUB_INTERNALS:
         return False
-    has_cfg = any((path / name).is_file() for name in CONFIG_NAMES)
-    if not has_cfg and not _is_hub_snapshot(path):
+    if not any((path / name).is_file() for name in CONFIG_NAMES):
+        return False
+    # hexgrad/Kokoro-82M ships config.json (istftnet/plbert/vocab) with no
+    # model_type. mlx-audio then uses the path basename — a snapshot SHA —
+    # and raises "Could not determine model type".
+    cfg = _read_model_config(path)
+    if not _config_is_typed(cfg) or _is_encoder_only(cfg):
         return False
     return _has_weights(path)
 
 
-def _is_hub_snapshot(path: Path) -> bool:
-    parent = path.parent
-    return parent.name == "snapshots" and parent.parent.name.startswith("models--")
+def _config_is_typed(cfg: dict[str, Any]) -> bool:
+    if cfg.get("model_type") or cfg.get("architecture") or cfg.get("_class_name"):
+        return True
+    arch = cfg.get("architectures")
+    if isinstance(arch, list) and arch:
+        return True
+    if isinstance(arch, str) and arch.strip():
+        return True
+    if cfg.get("quantization") or cfg.get("quantization_config"):
+        return True
+    return False
+
+
+def _is_encoder_only(cfg: dict[str, Any]) -> bool:
+    model_type = str(cfg.get("model_type") or "").lower().replace("-", "_")
+    return model_type in ENCODER_ONLY_TYPES
 
 
 def _has_weights(path: Path, depth: int = 0) -> bool:

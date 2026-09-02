@@ -80,8 +80,12 @@ basename (any case), `org/name`, or the path.
   Hugging Face hub layout (`models--org--name/snapshots/…`) is understood, so
   `~/.cache/huggingface/hub` works as a watch dir. Snapshot files are often
   symlinks into `blobs/`; scan follows those and also `.pth` / `.bin` / nested
-  diffusers weights (`model_index.json`). `datasets--` / `spaces--` / `blobs`
-  / `refs` are skipped.
+  diffusers weights (`model_index.json`). A snapshot still needs a typed config
+  (`model_type`, `architectures`, or `_class_name`). hexgrad/Kokoro's
+  `config.json` is an istftnet dump with none of those — skipped.
+  mlx-community conversions are kept. Encoder-only checkpoints (`clip`, `siglip`,
+  `vit`) are skipped — mlx-vlm has no Serve path (it looks for a speculative
+  drafter). `datasets--` / `spaces--` / `blobs` / `refs` are skipped.
 - `GET /health` — `{status, models, host, port, bind, url}`
 
 ## Progress
