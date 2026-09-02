@@ -1,17 +1,21 @@
 import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ChevronRight, CircleStop, Folder, PanelLeft, Play, Plus, RefreshCw, Search, Square, Trash2 } from "lucide-react";
+import { ChevronRight, CircleStop, Download, Folder, PanelLeft, Play, Plus, RefreshCw, Search, Square, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatContext, DIR_PLACEHOLDER, SUGGESTED_WATCH, loadTarget, sortLoadedFirst, type ModelRec } from "@/lib/models";
+import { formatContext, DIR_PLACEHOLDER, HF_HUB_WATCH, SUGGESTED_WATCH, loadTarget, sortLoadedFirst, type ModelRec } from "@/lib/models";
 import {
+  getHubStatus,
   modelGeneration,
   modelIsBusy,
   modelIsLive,
   modelIsPrefill,
   modelLoadProgress,
+  postHubDownload,
+  postHubSearch,
   postStop,
+  type HubQuant,
   type ProgressSnapshot,
 } from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
@@ -155,6 +159,8 @@ export function Sidebar({
           </p>
         ) : null}
       </Section>
+
+      <HubPanel />
 
       <Section title="Models" count={models.length} defaultOpen className="min-h-0 flex-1 border-t border-border">
         <div className="px-4 pb-2">
@@ -425,6 +431,113 @@ function ModelCard({
         </button>
       </div>
     </li>
+  );
+}
+
+function HubPanel() {
+  const watchDirs = useStudio((s) => s.watchDirs);
+  const addWatchDir = useStudio((s) => s.addWatchDir);
+  const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
+  const [draft, setDraft] = useState("");
+  const [token, setToken] = useState(false);
+  const [results, setResults] = useState<HubQuant[]>([]);
+  const [picked, setPicked] = useState("");
+  const [busy, setBusy] = useState<"search" | "download" | null>(null);
+
+  useEffect(() => {
+    void getHubStatus()
+      .then((s) => setToken(s.token))
+      .catch(() => setToken(false));
+  }, []);
+
+  async function lookup(e?: FormEvent) {
+    e?.preventDefault();
+    const query = draft.trim();
+    if (!query) return;
+    setBusy("search");
+    try {
+      const out = await postHubSearch(query);
+      setToken(out.token);
+      setResults(out.results);
+      const prefer = out.results.find((r) => r.quant === "4-bit") ?? out.results[0];
+      setPicked(prefer?.id ?? "");
+      if (!out.results.length) toast.error("No MLX quants for that repo");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Hub search failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function download() {
+    if (!picked) return;
+    setBusy("download");
+    try {
+      const out = await postHubDownload(picked);
+      toast.success(`Downloaded ${out.repo}`);
+      if (!watchDirs.includes(HF_HUB_WATCH)) await addWatchDir(HF_HUB_WATCH);
+      else await scanWatchDirs();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <Section title="Hugging Face" defaultOpen>
+      <form onSubmit={lookup} className="flex gap-2 px-4">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="https://huggingface.co/mlx-community/…"
+          className="h-9 font-mono text-xs"
+          aria-label="Hugging Face model URL"
+        />
+        <Button
+          type="submit"
+          variant="secondary"
+          size="icon-sm"
+          className="size-9"
+          aria-label="Find MLX quants"
+          disabled={!draft.trim() || busy !== null}
+        >
+          <Search className={cn(busy === "search" && "animate-spin")} />
+        </Button>
+      </form>
+      {results.length ? (
+        <div className="mt-2 space-y-2 px-4 pb-3">
+          <select
+            className="flex h-9 w-full rounded-md border border-input bg-card px-2 font-mono text-xs"
+            value={picked}
+            onChange={(e) => setPicked(e.target.value)}
+            aria-label="MLX quant"
+          >
+            {results.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.quant} · {row.id}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="w-full"
+            disabled={!picked || busy !== null}
+            onClick={() => void download()}
+          >
+            <Download className={cn(busy === "download" && "animate-pulse")} />
+            {busy === "download" ? "Downloading…" : "Download"}
+          </Button>
+        </div>
+      ) : (
+        <p className="px-4 pb-3 pt-2 text-[11px] text-muted-foreground">
+          Paste a Hub URL or org/name. Dropdown lists MLX quants (not the PyTorch dump).
+          {token ? " HF_TOKEN is set." : " Anonymous Hub access — set HF_TOKEN for gated repos."}
+        </p>
+      )}
+    </Section>
   );
 }
 

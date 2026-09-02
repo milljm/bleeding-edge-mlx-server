@@ -230,6 +230,28 @@ class GatewayTests(unittest.TestCase):
                 status, body = self._json("GET", "/v1/prefs")
                 self.assertEqual(body["flagsByModel"]["MiniMax"]["temp"], 0.4)
 
+    def test_hub_search_and_download(self):
+        from unittest import mock
+
+        fake = {
+            "query": "Qwen/Qwen3-8B",
+            "repo": "Qwen/Qwen3-8B",
+            "stem": "Qwen3-8B",
+            "token": False,
+            "results": [{"id": "mlx-community/Qwen3-8B-4bit", "quant": "4-bit", "downloads": 1}],
+        }
+        with mock.patch("mlx_edge.hub.search_quants", return_value=fake):
+            status, body = self._json("POST", "/v1/hub/search", {"query": "Qwen/Qwen3-8B"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["results"][0]["id"], "mlx-community/Qwen3-8B-4bit")
+        status, body = self._json("GET", "/v1/hub")
+        self.assertEqual(status, 200)
+        self.assertIn("token", body)
+        with mock.patch("mlx_edge.hub.download_repo", return_value={"ok": True, "repo": "mlx-community/Qwen3-8B-4bit", "path": "/cache", "token": False}):
+            status, body = self._json("POST", "/v1/hub/download", {"repo": "mlx-community/Qwen3-8B-4bit"})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["repo"], "mlx-community/Qwen3-8B-4bit")
+
     def test_playground_ram_roundtrip(self):
         status, body = self._json(
             "PUT",

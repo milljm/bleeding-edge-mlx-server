@@ -279,6 +279,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/playground", "/v1/chat/session"}:
                 self._playground_get()
                 return
+            if path in {"/v1/hub"}:
+                self._hub_status()
+                return
             if self._static(raw_path):
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
@@ -310,6 +313,12 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 return
             if path in {"/v1/scan", "/v1/models/scan"}:
                 self._scan()
+                return
+            if path in {"/v1/hub/search", "/v1/hub"}:
+                self._hub_search()
+                return
+            if path in {"/v1/hub/download"}:
+                self._hub_download()
                 return
             if path in {"/v1/prefs", "/v1/studio"}:
                 self._prefs_save()
@@ -356,6 +365,41 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 self._playground_clear()
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
+
+        def _hub_status(self) -> None:
+            from mlx_edge.hub import token_set
+
+            self._json({"token": token_set()})
+
+        def _hub_search(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                return
+            query = str(body.get("query") or body.get("url") or body.get("repo") or "").strip()
+            from mlx_edge.hub import search_quants
+
+            try:
+                self._json(search_quants(query))
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+
+        def _hub_download(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                return
+            repo = str(body.get("repo") or body.get("query") or "").strip()
+            from mlx_edge.hub import download_repo
+
+            try:
+                self._json(download_repo(repo, logs=pool.logs))
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+            except Exception as exc:  # noqa: BLE001
+                self._json({"error": {"message": str(exc), "type": "server_error"}}, 500)
 
         def _load(self) -> None:
             try:

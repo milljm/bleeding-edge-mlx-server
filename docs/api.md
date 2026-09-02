@@ -87,6 +87,11 @@ basename (any case), `org/name`, or the path.
   `vit`) are skipped — mlx-vlm has no Serve path (it looks for a speculative
   drafter). 1-bit quants are skipped (mlx supports 2/3/4/5/6/8).
   `datasets--` / `spaces--` / `blobs` / `refs` are skipped.
+- `GET /v1/hub` — `{token}` whether `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` is set
+  (the value is never returned). `POST /v1/hub/search` `{query}` (Hub URL or
+  `org/name`) lists MLX quants (mlx-community / `library_name=mlx`, no 1-bit).
+  `POST /v1/hub/download` `{repo}` runs `huggingface_hub.snapshot_download`
+  into `~/.cache/huggingface/hub`.
 - `GET /health` — `{status, models, host, port, bind, url}`
 
 ## Progress

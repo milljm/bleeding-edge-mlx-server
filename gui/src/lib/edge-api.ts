@@ -197,6 +197,49 @@ export async function postScan(dirs: string[]): Promise<{ models: ModelRec[]; er
   return { models: body.models ?? [], errors: body.errors ?? [] };
 }
 
+export type HubQuant = { id: string; quant: string; downloads: number };
+
+export async function getHubStatus(): Promise<{ token: boolean }> {
+  const res = await fetch("/v1/hub");
+  const body = (await parseJson(res)) as { token?: boolean };
+  return { token: Boolean(body.token) };
+}
+
+export async function postHubSearch(query: string): Promise<{
+  repo: string;
+  stem: string;
+  token: boolean;
+  results: HubQuant[];
+}> {
+  const res = await fetch("/v1/hub/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const body = (await parseJson(res)) as {
+    repo?: string;
+    stem?: string;
+    token?: boolean;
+    results?: HubQuant[];
+  };
+  return {
+    repo: body.repo ?? "",
+    stem: body.stem ?? "",
+    token: Boolean(body.token),
+    results: Array.isArray(body.results) ? body.results : [],
+  };
+}
+
+export async function postHubDownload(repo: string): Promise<{ repo: string; path: string }> {
+  const res = await fetch("/v1/hub/download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo }),
+  });
+  const body = (await parseJson(res)) as { repo?: string; path?: string };
+  return { repo: body.repo ?? repo, path: body.path ?? "" };
+}
+
 export type ProgressPhase = "idle" | "loading" | "prefill" | "decode" | "done" | "error";
 export type ProgressStatus = "ready" | "processing" | "complete" | "error";
 
