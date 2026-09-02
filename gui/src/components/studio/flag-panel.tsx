@@ -13,6 +13,14 @@ import { flagKey, formatContext, loadTarget } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
+const SPECIAL_BLURB: Partial<Record<EngineKind, string>> = {
+  embed: " Embedding models answer POST /v1/embeddings — they do not chat.",
+  tts: " TTS models answer POST /v1/audio/speech — Playground stays text-only.",
+  stt: " STT models answer POST /v1/audio/transcriptions — Playground stays text-only.",
+  rerank: " Rerankers answer POST /v1/rerank — Playground stays text-only.",
+  image: " Image models answer POST /v1/images/generations — Playground stays text-only.",
+};
+
 const GROUP_LABEL: Record<FlagGroup, string> = {
   server: "Server",
   sampling: "Sampling",
@@ -49,12 +57,8 @@ export function FlagPanel() {
             Settings for {model.name} only — they stick when you close Edge.
             {formatContext(model.context) ? ` Context window ${formatContext(model.context)}.` : ""}{" "}
             These map 1:1 onto {engineLabel(model.engine)} flags.
-            {model.engine === "embed"
-              ? " Embedding models answer POST /v1/embeddings — they do not chat."
-              : model.engine === "tts"
-                ? " TTS models answer POST /v1/audio/speech — Playground stays text-only."
-                : model.engine === "stt"
-                  ? " STT models answer POST /v1/audio/transcriptions — Playground stays text-only."
+            {SPECIAL_BLURB[model.engine]
+              ? SPECIAL_BLURB[model.engine]
               : live
                 ? dirty
                   ? " Flags changed on a running model — Reload to apply them."
@@ -105,6 +109,16 @@ export function FlagPanel() {
           <span className="font-mono text-foreground">/v1/audio/transcriptions</span> (multipart file + model).
           Playground stays text-only.
         </p>
+      ) : model.engine === "rerank" ? (
+        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
+          This is a reranker. Serve it, then POST <span className="font-mono text-foreground">/v1/rerank</span> with{" "}
+          <span className="font-mono text-foreground">{`{"query","documents"}`}</span>. Playground stays text-only.
+        </p>
+      ) : model.engine === "image" ? (
+        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
+          This is an image-generation model. Serve it, then POST{" "}
+          <span className="font-mono text-foreground">/v1/images/generations</span>. Playground stays text-only.
+        </p>
       ) : model.engine === "vlm" ? (
         <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
           mlx-vlm.server has no <span className="font-mono text-foreground">--temp</span> /{" "}
@@ -154,6 +168,8 @@ function EngineCard() {
     { value: "embed", label: "embed" },
     { value: "tts", label: "tts" },
     { value: "stt", label: "stt" },
+    { value: "rerank", label: "rerank" },
+    { value: "image", label: "image" },
   ];
 
   return (

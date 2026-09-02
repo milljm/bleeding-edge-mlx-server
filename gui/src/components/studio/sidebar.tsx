@@ -75,8 +75,8 @@ export function Sidebar({
     <aside className="flex h-full min-h-0 flex-col bg-card paper">
       <div className="flex items-center gap-2 px-4 pb-3 pt-4">
         <div className="min-w-0 flex-1">
-          <p className="font-display text-2xl italic leading-none tracking-tight">Edge</p>
-          <p className="mt-1 text-xs text-muted-foreground">Front-end for mlx-edge</p>
+          <p className="font-display text-2xl italic leading-none tracking-tight">MLX-Edge</p>
+          <p className="mt-1 text-xs text-muted-foreground">A front-end for mlx-lm, mlx-vlm</p>
         </div>
         {onCollapse ? (
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Collapse sidebar" onClick={onCollapse}>

@@ -75,6 +75,28 @@ EMBED_ARCH_MARKERS = (
     "xlmrobertamodel",
     "nomicbert",
 )
+RERANK_NAME_MARKERS = (
+    "rerank",
+    "cross_encoder",
+    "crossencoder",
+)
+IMAGE_NAME_MARKERS = (
+    "flux",
+    "z_image",
+    "zimage",
+    "stable_diffusion",
+    "sdxl",
+    "sd3",
+    "mage_flow",
+    "mageflow",
+    "ernie_image",
+    "hidream",
+    "kolors",
+    "auraflow",
+    "text2image",
+    "t2i",
+    "image_gen",
+)
 TTS_NAME_MARKERS = (
     "tts",
     "kokoro",
@@ -311,6 +333,11 @@ def _infer_engine(cfg: dict[str, Any], repo: str, folder: str) -> str:
             folder,
         ]
     ).lower().replace("-", "_")
+    # Rerank before embed: bge-reranker matches both.
+    if any(marker in blob for marker in RERANK_NAME_MARKERS):
+        return "rerank"
+    if any(marker in blob for marker in IMAGE_NAME_MARKERS):
+        return "image"
     if any(marker in blob for marker in EMBED_NAME_MARKERS):
         return "embed"
     model_type = str(cfg.get("model_type") or "").lower().replace("-", "_")

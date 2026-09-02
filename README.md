@@ -56,6 +56,8 @@ mlx-edge load --engine vlm --model mlx-community/Qwen2.5-VL-7B-Instruct-4bit
 mlx-edge load --engine embed --model mlx-community/Qwen3-Embedding-0.6B-4bit
 mlx-edge load --engine tts --model mlx-community/Kokoro-82M-4bit
 mlx-edge load --engine stt --model mlx-community/whisper-tiny-mlx
+mlx-edge load --engine rerank --model mlx-community/Qwen3-Reranker-0.6B-4bit
+mlx-edge load --engine image --model mlx-community/FLUX.1-schnell-4bit
 ```
 
 Or preload at start:
@@ -66,7 +68,9 @@ edge-gui --host 127.0.0.1 --port 8080 \
   --vlm mlx-community/Qwen2.5-VL-7B-Instruct-4bit \
   --embed mlx-community/Qwen3-Embedding-0.6B-4bit \
   --tts mlx-community/Kokoro-82M-4bit \
-  --stt mlx-community/whisper-tiny-mlx
+  --stt mlx-community/whisper-tiny-mlx \
+  --rerank mlx-community/Qwen3-Reranker-0.6B-4bit \
+  --image mlx-community/FLUX.1-schnell-4bit
 ```
 
 Unload one without touching the others:

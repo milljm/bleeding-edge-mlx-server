@@ -144,6 +144,16 @@ class PoolTests(unittest.TestCase):
         self.assertEqual(argv[argv.index("--stt-model") + 1], "/models/whisper-tiny")
         self.assertNotIn("--model", argv)
 
+    def test_rerank_and_image_spawn_flags(self):
+        rerank = spawn_argv("rerank", "/models/Qwen3-Reranker-0.6B", 12, ["--model", "nope"])
+        self.assertIn("--reranker-model", rerank)
+        self.assertEqual(rerank[rerank.index("--reranker-model") + 1], "/models/Qwen3-Reranker-0.6B")
+        self.assertNotIn("--model", rerank)
+        image = spawn_argv("image", "/models/FLUX.1-schnell", 13, [])
+        self.assertIn("--image-model", image)
+        self.assertEqual(image[image.index("--image-model") + 1], "/models/FLUX.1-schnell")
+        self.assertNotIn("--model", image)
+
     def test_embed_openai_owned_by(self):
         pool = self._pool()
         item = pool.load("embed", "/models/Qwen3-Embedding-0.6B")

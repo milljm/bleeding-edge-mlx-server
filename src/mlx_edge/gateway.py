@@ -24,6 +24,15 @@ CORS = {
     "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
 }
 
+# Dedicated mlx-vlm.server children (not chat). kind → (route noun, client hint)
+SPECIAL_KINDS = {
+    "embed": ("embeddings", "POST /v1/embeddings"),
+    "tts": ("speech", "POST /v1/audio/speech"),
+    "stt": ("transcriptions", "POST /v1/audio/transcriptions"),
+    "rerank": ("rerank", "POST /v1/rerank"),
+    "image": ("image generation", "POST /v1/images/generations"),
+}
+
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -309,7 +318,18 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 self._proxy()
                 return
             if path in {"/v1/embeddings", "/embeddings"}:
-                self._embeddings()
+                self._kind_json("embed")
+                return
+            if path in {"/v1/rerank", "/rerank", "/v1/reranking"}:
+                self._kind_json("rerank")
+                return
+            if path in {
+                "/v1/images/generations",
+                "/images/generations",
+                "/v1/images/edits",
+                "/images/edits",
+            }:
+                self._kind_json("image")
                 return
             if path in {"/v1/audio/speech", "/audio/speech"}:
                 self._audio("tts")
@@ -346,8 +366,8 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             engine = str(body.get("engine") or "lm")
             model = str(body.get("model") or "").strip()
             extra = body.get("args") or []
-            if engine not in {"lm", "vlm", "embed", "tts", "stt"}:
-                self._json({"error": {"message": "engine must be lm, vlm, embed, tts, or stt", "type": "invalid_request_error"}}, 400)
+            if engine not in {"lm", "vlm", "embed", "tts", "stt", "rerank", "image"}:
+                self._json({"error": {"message": "engine must be lm, vlm, embed, tts, stt, rerank, or image", "type": "invalid_request_error"}}, 400)
                 return
             if not model:
                 self._json({"error": {"message": "model is required", "type": "invalid_request_error"}}, 400)
@@ -536,8 +556,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
 
         def _resolve(self, requested: object, *, kind: str) -> LoadedModel | None:
             loaded = pool.list()
+            special = kind in SPECIAL_KINDS
             if not loaded:
-                hint = kind if kind in {"embed", "tts", "stt"} else "lm"
+                hint = kind if special else "lm"
                 self._json(
                     {
                         "error": {
@@ -549,7 +570,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 )
                 return None
             needle = str(requested).strip() if requested else ""
-            if kind in {"embed", "tts", "stt"} and not needle:
+            if special and not needle:
                 item = next((m for m in loaded if m.engine == kind), None)
                 if not item:
                     self._json(
@@ -583,8 +604,8 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     503,
                 )
                 return None
-            if kind in {"embed", "tts", "stt"} and item.engine != kind:
-                label = {"embed": "embeddings", "tts": "speech", "stt": "transcriptions"}[kind]
+            if special and item.engine != kind:
+                label = SPECIAL_KINDS[kind][0]
                 self._json(
                     {
                         "error": {
@@ -598,12 +619,8 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     400,
                 )
                 return None
-            if kind == "chat" and item.engine in {"embed", "tts", "stt"}:
-                dest = {
-                    "embed": "POST /v1/embeddings",
-                    "tts": "POST /v1/audio/speech",
-                    "stt": "POST /v1/audio/transcriptions",
-                }[item.engine]
+            if kind == "chat" and item.engine in SPECIAL_KINDS:
+                dest = SPECIAL_KINDS[item.engine][1]
                 self._json(
                     {
                         "error": {
@@ -648,13 +665,13 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             finally:
                 pool.untrack_request(job)
 
-        def _embeddings(self) -> None:
+        def _kind_json(self, kind: str) -> None:
             try:
                 body = _read_json(self)
             except ValueError as exc:
                 self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
                 return
-            item = self._resolve(body.get("model"), kind="embed")
+            item = self._resolve(body.get("model"), kind=kind)
             if item is None:
                 return
             body["model"] = item.model

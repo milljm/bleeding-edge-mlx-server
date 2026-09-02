@@ -18,6 +18,8 @@ export function EndpointPanel() {
   const embed = model.engine === "embed";
   const tts = model.engine === "tts";
   const stt = model.engine === "stt";
+  const rerank = model.engine === "rerank";
+  const image = model.engine === "image";
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -61,6 +63,16 @@ export function EndpointPanel() {
         <CopyBlock
           label="curl transcriptions"
           code={`curl ${base}/audio/transcriptions \\\n  -F model=${id} \\\n  -F file=@audio.wav`}
+        />
+      ) : rerank ? (
+        <CopyBlock
+          label="curl rerank"
+          code={`curl ${base}/rerank \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${id}","query":"What is the capital of France?","documents":["Berlin is in Germany.","Paris is the capital of France."],"top_n":1}'`}
+        />
+      ) : image ? (
+        <CopyBlock
+          label="curl image generation"
+          code={`curl ${base}/images/generations \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${id}","prompt":"a red fox in snow","n":1}'`}
         />
       ) : (
         <CopyBlock
