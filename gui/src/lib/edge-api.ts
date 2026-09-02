@@ -205,6 +205,7 @@ export type HubProgress = {
   bytes: number;
   total: number;
   ratio: number;
+  detail: string;
   error: string;
   path: string;
   token: boolean;
@@ -225,6 +226,7 @@ export async function getHubProgress(): Promise<HubProgress> {
     bytes: Number(body.bytes || 0),
     total: Number(body.total || 0),
     ratio: Number(body.ratio || 0),
+    detail: String(body.detail || ""),
     error: String(body.error || ""),
     path: String(body.path || ""),
     token: Boolean(body.token),

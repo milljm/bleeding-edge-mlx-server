@@ -600,11 +600,11 @@ function HubPanel() {
                   aria-valuenow={Math.round(fill * 100)}
                 />
               ) : null}
-              <span className="relative z-[1]">
+              <span className="relative z-[1] truncate px-1">
                 {job?.phase === "paused"
-                  ? `Paused ${Math.round(fill * 100)}%`
+                  ? `Paused ${Math.round(fill * 100)}%${job.detail ? ` · ${job.detail}` : ""}`
                   : downloading
-                    ? `Downloading ${Math.round(fill * 100)}%`
+                    ? `Downloading ${Math.round(fill * 100)}%${job?.detail ? ` · ${job.detail}` : ""}`
                     : "Download"}
               </span>
             </button>

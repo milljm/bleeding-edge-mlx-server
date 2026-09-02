@@ -5,6 +5,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import select
+import signal
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -211,54 +215,83 @@ def repo_nbytes(repo: str) -> int:
     return total
 
 
-class HubTqdm:
-    """tqdm stand-in. Blocking in update() pauses the huggingface_hub byte loop."""
+def hub_downloaded_bytes(hub_dir: Path) -> int:
+    """Bytes on disk for this repo (blobs + incomplete). Snapshots are symlinks."""
+    total = 0
+    for sub in ("blobs", "incomplete"):
+        folder = hub_dir / sub
+        if not folder.is_dir():
+            continue
+        for dirpath, _dirnames, filenames in os.walk(folder):
+            for name in filenames:
+                path = Path(dirpath) / name
+                try:
+                    if path.is_file() and not path.is_symlink():
+                        total += path.stat().st_size
+                except OSError:
+                    continue
+    return total
 
-    def __init__(self, iterable=None, *args, **kwargs):
-        self.iterable = iterable
-        self.n = 0
-        self.total = int(kwargs.get("total") or 0)
-        self.desc = str(kwargs.get("desc") or "")
-        self.disable = True
-        JOB.add_bar(self)
 
-    def update(self, n: int | float = 1) -> None:
-        JOB.wait_run()
-        if JOB.cancel.is_set():
-            raise HubCancelled()
-        self.n += int(n)
-        JOB.recompute()
+def human_bytes(n: int) -> str:
+    n = max(0, int(n))
+    if n < 1024:
+        return f"{n} B"
+    for unit, size in (("GB", 1024**3), ("MB", 1024**2), ("KB", 1024)):
+        if n >= size:
+            value = n / size
+            return f"{value:.1f} {unit}" if value < 10 else f"{value:.0f} {unit}"
+    return f"{n} B"
 
-    def close(self) -> None:
-        JOB.drop_bar(self)
 
-    def clear(self, *args: Any, **kwargs: Any) -> None:
-        return None
+def _signal(proc: Any, sig: int) -> None:
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.send_signal(sig)
+    except (OSError, ProcessLookupError, AttributeError, ValueError):
+        return
 
-    def refresh(self, *args: Any, **kwargs: Any) -> None:
-        return None
 
-    def set_description(self, *args: Any, **kwargs: Any) -> None:
-        return None
+def _kill_proc(proc: Any) -> None:
+    if proc is None:
+        return
+    try:
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGCONT)
+    except (OSError, ProcessLookupError, AttributeError, ValueError):
+        pass
+    try:
+        proc.terminate()
+        proc.wait(timeout=2)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
-    def set_postfix(self, *args: Any, **kwargs: Any) -> None:
-        return None
 
-    def reset(self, total: int | None = None) -> None:
-        if total is not None:
-            self.total = int(total)
-        self.n = 0
+_DOWNLOAD_PY = r"""
+import os, sys
+from huggingface_hub import snapshot_download
+repo = sys.argv[1]
+token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+path = snapshot_download(repo_id=repo, token=token)
+print(path)
+"""
 
-    def __enter__(self) -> HubTqdm:
-        return self
 
-    def __exit__(self, *exc: Any) -> None:
-        self.close()
-
-    def __iter__(self):
-        for item in self.iterable or []:
-            self.update(1)
-            yield item
+def _spawn_download(repo: str) -> subprocess.Popen[bytes]:
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    return subprocess.Popen(
+        [sys.executable, "-u", "-c", _DOWNLOAD_PY, repo],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=env,
+    )
 
 
 class HubJob:
@@ -270,24 +303,25 @@ class HubJob:
         self.total = 0
         self.error = ""
         self.path = ""
-        self.pause = threading.Event()
-        self.pause.set()
         self.cancel = threading.Event()
         self.thread: threading.Thread | None = None
-        self.bars: list[HubTqdm] = []
+        self.proc: subprocess.Popen[bytes] | None = None
         self.logs: Any | None = None
+        self._logged_pct = -1
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             total = self.total
             n = self.n
             ratio = min(1.0, n / total) if total else (1.0 if self.phase == "done" else 0.0)
+            detail = f"{human_bytes(n)} / {human_bytes(total)}" if total else (human_bytes(n) if n else "")
             return {
                 "repo": self.repo,
                 "phase": self.phase,
                 "bytes": n,
                 "total": total,
                 "ratio": round(ratio, 4),
+                "detail": detail,
                 "error": self.error,
                 "path": self.path,
                 "token": token_set(),
@@ -299,34 +333,27 @@ class HubJob:
                 return False
             if not self.repo:
                 return False
+            repo = self.repo
         try:
-            return path.resolve() == hub_folder(self.repo).resolve()
+            return path.resolve() == hub_folder(repo).resolve()
         except OSError:
             return False
 
-    def add_bar(self, bar: HubTqdm) -> None:
+    def _poll_disk(self, folder: Path) -> None:
+        n = hub_downloaded_bytes(folder)
         with self.lock:
-            self.bars.append(bar)
-
-    def drop_bar(self, bar: HubTqdm) -> None:
-        with self.lock:
-            self.bars = [b for b in self.bars if b is not bar]
-
-    def recompute(self) -> None:
-        with self.lock:
-            n = sum(max(0, b.n) for b in self.bars)
-            bar_total = sum(max(0, b.total) for b in self.bars)
-            if bar_total > self.total:
-                self.total = bar_total
-            if n > self.n:
-                self.n = n
-
-    def wait_run(self) -> None:
-        while True:
-            if self.cancel.is_set():
-                raise HubCancelled()
-            if self.pause.wait(timeout=0.2):
-                return
+            if self.total:
+                n = min(n, self.total)
+            self.n = n
+            total = self.total
+            pct = int((n / total) * 100) if total else 0
+            logs = self.logs
+            last = self._logged_pct
+            repo = self.repo
+        if logs is not None and pct >= last + 5:
+            with self.lock:
+                self._logged_pct = pct
+            logs.append(repo.split("/")[-1], "hub", f"{pct}% · {human_bytes(n)} / {human_bytes(total)}")
 
     def start(self, repo: str, logs: Any | None = None) -> dict[str, Any]:
         require_token()
@@ -336,8 +363,9 @@ class HubJob:
             raise ValueError(f"{repo} is {bits}-bit — mlx only loads 2/3/4/5/6/8")
         with self.lock:
             if self.phase in {"downloading", "paused"} and self.repo == repo:
-                self.pause.set()
-                self.phase = "downloading"
+                if self.phase == "paused":
+                    self.phase = "downloading"
+                    _signal(self.proc, signal.SIGCONT)
                 return self.snapshot()
             if self.phase in {"downloading", "paused"}:
                 raise RuntimeError(f"already downloading {self.repo}")
@@ -347,10 +375,10 @@ class HubJob:
             self.total = 0
             self.error = ""
             self.path = ""
-            self.bars = []
             self.logs = logs
+            self.proc = None
+            self._logged_pct = -1
             self.cancel.clear()
-            self.pause.set()
         if logs is not None:
             logs.append(repo.split("/")[-1], "hub", f"Downloading {repo} into Hugging Face cache…")
         self.thread = threading.Thread(target=self._run, name="hf-download", daemon=True)
@@ -362,7 +390,8 @@ class HubJob:
             if self.phase != "downloading":
                 return self.snapshot()
             self.phase = "paused"
-        self.pause.clear()
+            proc = self.proc
+        _signal(proc, signal.SIGSTOP)
         return self.snapshot()
 
     def request_resume(self) -> dict[str, Any]:
@@ -370,46 +399,80 @@ class HubJob:
             if self.phase != "paused":
                 return self.snapshot()
             self.phase = "downloading"
-        self.pause.set()
+            proc = self.proc
+        _signal(proc, signal.SIGCONT)
         return self.snapshot()
 
     def request_cancel(self) -> dict[str, Any]:
         self.cancel.set()
-        self.pause.set()
         with self.lock:
+            proc = self.proc
             if self.phase in {"downloading", "paused"}:
                 self.phase = "cancelled"
+        _kill_proc(proc)
         return self.snapshot()
 
     def _run(self) -> None:
         repo = self.repo
+        folder = hub_folder(repo)
         try:
             expected = repo_nbytes(repo)
             with self.lock:
                 if expected:
                     self.total = expected
-            path = _snapshot(repo, tqdm_class=HubTqdm)
-            if self.cancel.is_set():
-                raise HubCancelled()
+            self._poll_disk(folder)
+            proc = _spawn_download(repo)
             with self.lock:
-                self.path = path
-                self.phase = "done"
-                if self.total:
-                    self.n = self.total
-            if self.logs is not None:
-                self.logs.append(repo.split("/")[-1], "hub", f"Downloaded {repo} → {path}")
+                self.proc = proc
+            chunks: list[bytes] = []
+            stdout = proc.stdout
+            while True:
+                if self.cancel.is_set():
+                    _kill_proc(proc)
+                    raise HubCancelled()
+                if stdout is not None:
+                    ready, _, _ = select.select([stdout], [], [], 0.2)
+                    if ready:
+                        piece = stdout.read(4096)
+                        if piece:
+                            chunks.append(piece)
+                else:
+                    time.sleep(0.2)
+                self._poll_disk(folder)
+                code = proc.poll()
+                if code is None:
+                    continue
+                if stdout is not None:
+                    rest = stdout.read() or b""
+                    if rest:
+                        chunks.append(rest)
+                text = b"".join(chunks).decode("utf-8", "replace").strip()
+                if code != 0:
+                    raise RuntimeError(text or f"download exited {code}")
+                path = text.splitlines()[-1] if text else str(folder)
+                with self.lock:
+                    self.path = path
+                    self.phase = "done"
+                    if self.total:
+                        self.n = self.total
+                if self.logs is not None:
+                    self.logs.append(repo.split("/")[-1], "hub", f"Downloaded {repo} → {path}")
+                return
         except HubCancelled:
             with self.lock:
                 self.phase = "cancelled"
                 self.error = "cancelled"
             if self.logs is not None:
                 self.logs.append(repo.split("/")[-1], "hub", f"Cancelled {repo}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as extra:  # noqa: BLE001
             with self.lock:
                 self.phase = "error"
-                self.error = str(exc)
+                self.error = str(extra)
             if self.logs is not None:
-                self.logs.append(repo.split("/")[-1], "hub", f"Download failed: {exc}")
+                self.logs.append(repo.split("/")[-1], "hub", f"Download failed: {extra}")
+        finally:
+            with self.lock:
+                self.proc = None
 
 
 JOB = HubJob()
@@ -447,30 +510,3 @@ def download_repo(raw: str, logs: Any | None = None, timeout: float = 3600.0) ->
     if snap["phase"] == "done":
         return {"ok": True, "repo": snap["repo"], "path": snap["path"], "token": token_set()}
     raise RuntimeError(snap.get("error") or f"download {snap['phase']}")
-
-
-def _snapshot(repo: str, tqdm_class: type | None = None) -> str:
-    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError:
-        return _snapshot_cli(repo)
-    kwargs: dict[str, Any] = {"repo_id": repo, "token": token, "max_workers": 1}
-    if tqdm_class is not None:
-        kwargs["tqdm_class"] = tqdm_class
-    return str(snapshot_download(**kwargs))
-
-
-def _snapshot_cli(repo: str) -> str:
-    import shutil
-    import subprocess
-
-    exe = shutil.which("hf") or shutil.which("huggingface-cli")
-    if not exe:
-        raise RuntimeError("huggingface_hub is not installed (and no hf CLI)")
-    cmd = [exe, "download", repo]
-    proc = subprocess.run(cmd, check=False, text=True, capture_output=True)
-    if proc.returncode != 0:
-        raise RuntimeError((proc.stderr or proc.stdout or "hf download failed").strip())
-    line = (proc.stdout or "").strip().splitlines()
-    return line[-1] if line else repo
