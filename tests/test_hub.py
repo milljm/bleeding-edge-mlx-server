@@ -1,26 +1,83 @@
 import json
 import os
+import signal
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from mlx_edge.hub import JOB, download_repo, parse_repo, search_quants, search_stem, start_download, token_set
+from mlx_edge.hub import (
+    JOB,
+    download_repo,
+    hub_downloaded_bytes,
+    human_bytes,
+    parse_repo,
+    search_quants,
+    search_stem,
+    start_download,
+    token_set,
+)
 from mlx_edge.scan import list_models
+
+
+class InstantProc:
+    stdout = None
+
+    def poll(self):
+        return 0
+
+    def send_signal(self, sig):
+        return None
+
+    def terminate(self):
+        return None
+
+    def kill(self):
+        return None
+
+    def wait(self, timeout=None):
+        return 0
+
+
+class LiveProc:
+    def __init__(self):
+        self.stdout = None
+        self.signals: list[int] = []
+        self.alive = True
+
+    def poll(self):
+        return None if self.alive else 0
+
+    def send_signal(self, sig):
+        self.signals.append(sig)
+        if sig in {signal.SIGTERM, signal.SIGKILL}:
+            self.alive = False
+
+    def terminate(self):
+        self.alive = False
+
+    def kill(self):
+        self.alive = False
+
+    def wait(self, timeout=None):
+        self.alive = False
+        return 0
 
 
 class HubTests(unittest.TestCase):
     def setUp(self):
+        JOB.cancel.set()
+        if JOB.thread and JOB.thread.is_alive():
+            JOB.thread.join(timeout=1)
         JOB.phase = "idle"
         JOB.repo = ""
         JOB.error = ""
         JOB.path = ""
         JOB.n = 0
         JOB.total = 0
-        JOB.bars = []
+        JOB.proc = None
         JOB.cancel.clear()
-        JOB.pause.set()
 
     def test_parse_url_and_repo(self):
         self.assertEqual(
@@ -73,40 +130,54 @@ class HubTests(unittest.TestCase):
 
     def test_download_uses_snapshot(self):
         with mock.patch.dict(os.environ, {"HF_TOKEN": "hf_test"}, clear=False):
-            with mock.patch("mlx_edge.hub.repo_nbytes", return_value=0):
-                with mock.patch("mlx_edge.hub._snapshot", return_value="/cache/snap") as snap:
+            with mock.patch("mlx_edge.hub.repo_nbytes", return_value=100):
+                with mock.patch("mlx_edge.hub._spawn_download", return_value=InstantProc()):
                     out = download_repo("mlx-community/SmolLM2-135M-Instruct-4bit")
-        snap.assert_called_once()
-        self.assertEqual(out["path"], "/cache/snap")
         self.assertEqual(out["repo"], "mlx-community/SmolLM2-135M-Instruct-4bit")
         self.assertEqual(JOB.phase, "done")
 
-    def test_pause_resume_cancel(self):
-        JOB.repo = "mlx-community/Qwen3-8B-4bit"
-        JOB.phase = "downloading"
-        JOB.request_pause()
-        self.assertEqual(JOB.phase, "paused")
-        JOB.request_resume()
-        self.assertEqual(JOB.phase, "downloading")
-        JOB.request_cancel()
-        self.assertEqual(JOB.phase, "cancelled")
+    def test_pause_sends_sigstop(self):
+        proc = LiveProc()
+        with mock.patch.dict(os.environ, {"HF_TOKEN": "hf_test"}, clear=False):
+            with mock.patch("mlx_edge.hub.repo_nbytes", return_value=1000):
+                with mock.patch("mlx_edge.hub._spawn_download", return_value=proc):
+                    start_download("mlx-community/SmolLM2-135M-Instruct-4bit")
+                    for _ in range(20):
+                        if JOB.proc is proc:
+                            break
+                        threading.Event().wait(0.05)
+                    snap = JOB.request_pause()
+                    self.assertEqual(snap["phase"], "paused")
+                    self.assertIn(signal.SIGSTOP, proc.signals)
+                    snap = JOB.request_resume()
+                    self.assertEqual(snap["phase"], "downloading")
+                    self.assertIn(signal.SIGCONT, proc.signals)
+                    JOB.request_cancel()
+                    self.assertFalse(proc.alive)
 
     def test_start_download_returns_before_finish(self):
-        gate = threading.Event()
-
-        def slow_snap(repo, tqdm_class=None):
-            gate.wait(timeout=2)
-            return "/cache/snap"
-
+        proc = LiveProc()
         with mock.patch.dict(os.environ, {"HF_TOKEN": "hf_test"}, clear=False):
             with mock.patch("mlx_edge.hub.repo_nbytes", return_value=100):
-                with mock.patch("mlx_edge.hub._snapshot", side_effect=slow_snap):
+                with mock.patch("mlx_edge.hub._spawn_download", return_value=proc):
                     snap = start_download("mlx-community/SmolLM2-135M-Instruct-4bit")
                     self.assertEqual(snap["phase"], "downloading")
-                    gate.set()
+                    proc.alive = False
                     if JOB.thread:
                         JOB.thread.join(timeout=2)
         self.assertEqual(JOB.phase, "done")
+
+    def test_hub_downloaded_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            hub = Path(tmp)
+            (hub / "blobs").mkdir()
+            (hub / "incomplete").mkdir()
+            (hub / "blobs" / "aaa").write_bytes(b"x" * 50)
+            (hub / "incomplete" / "bbb").write_bytes(b"y" * 20)
+            (hub / "snapshots").mkdir()
+            (hub / "snapshots" / "link").symlink_to(hub / "blobs" / "aaa")
+            self.assertEqual(hub_downloaded_bytes(hub), 70)
+            self.assertEqual(human_bytes(1500), "1.5 KB")
 
     def test_incomplete_hub_snapshot_is_hidden(self):
         with tempfile.TemporaryDirectory() as tmp:
