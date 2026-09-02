@@ -779,7 +779,67 @@ class GatewayTests(unittest.TestCase):
                 {"model": "Qwen3-Embedding-0.6B-4bit", "messages": [{"role": "user", "content": "hi"}]},
             )
             self.assertEqual(status, 400)
-            self.assertIn("embedding model", (body.get("error") or {}).get("message", ""))
+            self.assertIn("embed model", (body.get("error") or {}).get("message", ""))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_tts_proxy_and_rejects_chat(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        recorded: dict = {}
+
+        class RecHandler(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                recorded["path"] = self.path
+                recorded["body"] = json.loads(self.rfile.read(length).decode() or "{}")
+                payload = b"ID3fake-mp3"
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/mpeg")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), RecHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        path = "/models/Kokoro-82M"
+        try:
+            item = LoadedModel(
+                id="Kokoro-82M",
+                engine="tts",
+                model=path,
+                port=engine_port,
+                started_at=0.0,
+                public_id="Kokoro-82M",
+            )
+            self.pool._models[item.id] = item
+            req = urllib.request.Request(
+                self.base + "/v1/audio/speech",
+                data=json.dumps({"model": "kokoro-82m", "input": "hello"}).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertEqual(resp.read(), b"ID3fake-mp3")
+            self.assertEqual(recorded["path"], "/v1/audio/speech")
+            self.assertEqual(recorded["body"]["model"], path)
+
+            status, body = self._json(
+                "POST",
+                "/v1/chat/completions",
+                {"model": "Kokoro-82M", "messages": [{"role": "user", "content": "hi"}]},
+            )
+            self.assertEqual(status, 400)
+            self.assertIn("/v1/audio/speech", (body.get("error") or {}).get("message", ""))
         finally:
             httpd.shutdown()
             httpd.server_close()

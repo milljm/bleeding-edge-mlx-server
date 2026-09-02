@@ -1,4 +1,4 @@
-export type EngineKind = "lm" | "vlm" | "embed";
+export type EngineKind = "lm" | "vlm" | "embed" | "tts" | "stt";
 export type FlagType = "number" | "text" | "bool" | "select";
 export type FlagGroup = "server" | "sampling" | "thinking" | "template";
 
@@ -174,7 +174,7 @@ export const FLAG_DEFS: FlagDef[] = [
     label: "Trust remote code",
     help: "Allow custom tokenizer / model code from Hub.",
     type: "bool",
-    engines: ["lm", "vlm", "embed"],
+    engines: ["lm", "vlm", "embed", "tts", "stt"],
     advanced: true,
     default: false,
   },
@@ -184,7 +184,7 @@ export const FLAG_DEFS: FlagDef[] = [
     label: "Log level",
     help: "Server logging verbosity.",
     type: "select",
-    engines: ["lm", "vlm", "embed"],
+    engines: ["lm", "vlm", "embed", "tts", "stt"],
     advanced: true,
     options: [
       { value: "DEBUG", label: "DEBUG" },
@@ -327,36 +327,6 @@ export const FLAG_DEFS: FlagDef[] = [
     default: "",
   },
   {
-    key: "ttsModel",
-    flag: "--tts-model",
-    label: "TTS model",
-    help: "Preload an extra text-to-speech model on this same mlx-vlm.server.",
-    type: "text",
-    engines: ["vlm"],
-    advanced: true,
-    default: "",
-  },
-  {
-    key: "sttModel",
-    flag: "--stt-model",
-    label: "STT model",
-    help: "Preload an extra speech-to-text model on this same mlx-vlm.server.",
-    type: "text",
-    engines: ["vlm"],
-    advanced: true,
-    default: "",
-  },
-  {
-    key: "embeddingModel",
-    flag: "--embedding-model",
-    label: "Embedding model",
-    help: "Preload an extra embedding model on this VLM server. Prefer engine embed (its own mlx-vlm.server --embedding-model) for a dedicated embed child.",
-    type: "text",
-    engines: ["vlm"],
-    advanced: true,
-    default: "",
-  },
-  {
     key: "rerankerModel",
     flag: "--reranker-model",
     label: "Reranker model",
@@ -422,7 +392,7 @@ export function flagsForModel(
 ): FlagValues {
   const base = defaultFlags();
   const context = model?.context;
-  if (model?.engine !== "embed" && typeof context === "number" && context > 0) {
+  if ((model?.engine === "lm" || model?.engine === "vlm") && typeof context === "number" && context > 0) {
     const cap = FLAG_DEFS.find((d) => d.key === "maxTokens");
     const max = typeof cap?.max === "number" ? cap.max : context;
     const min = typeof cap?.min === "number" ? cap.min : 16;
@@ -434,11 +404,15 @@ export function flagsForModel(
 export function ownedBy(engine: EngineKind) {
   if (engine === "vlm") return "mlx-vlm";
   if (engine === "embed") return "mlx-embed";
+  if (engine === "tts") return "mlx-tts";
+  if (engine === "stt") return "mlx-stt";
   return "mlx-lm";
 }
 
 export function engineFromOwnedBy(value?: string | null): EngineKind {
   if (value === "mlx-vlm") return "vlm";
   if (value === "mlx-embed") return "embed";
+  if (value === "mlx-tts") return "tts";
+  if (value === "mlx-stt") return "stt";
   return "lm";
 }

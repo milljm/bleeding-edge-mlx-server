@@ -51,6 +51,10 @@ export function FlagPanel() {
             These map 1:1 onto {engineLabel(model.engine)} flags.
             {model.engine === "embed"
               ? " Embedding models answer POST /v1/embeddings — they do not chat."
+              : model.engine === "tts"
+                ? " TTS models answer POST /v1/audio/speech — Playground stays text-only."
+                : model.engine === "stt"
+                  ? " STT models answer POST /v1/audio/transcriptions — Playground stays text-only."
               : live
                 ? dirty
                   ? " Flags changed on a running model — Reload to apply them."
@@ -89,13 +93,24 @@ export function FlagPanel() {
           This is an embedding model. Serve it, then POST <span className="font-mono text-foreground">/v1/embeddings</span>.
           Keep a chat model loaded too — RAG does not unload it.
         </p>
+      ) : model.engine === "tts" ? (
+        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
+          This is a text-to-speech model. Serve it, then POST{" "}
+          <span className="font-mono text-foreground">/v1/audio/speech</span> with{" "}
+          <span className="font-mono text-foreground">{`{"model","input"}`}</span>. Playground stays text-only.
+        </p>
+      ) : model.engine === "stt" ? (
+        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
+          This is a speech-to-text model. Serve it, then POST{" "}
+          <span className="font-mono text-foreground">/v1/audio/transcriptions</span> (multipart file + model).
+          Playground stays text-only.
+        </p>
       ) : model.engine === "vlm" ? (
         <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
           mlx-vlm.server has no <span className="font-mono text-foreground">--temp</span> /{" "}
           <span className="font-mono text-foreground">--top-p</span> /{" "}
           <span className="font-mono text-foreground">--prompt-cache-size</span> — those are mlx-lm
-          defaults. Send sampling on the request. Advanced flags can preload extra image / speech /
-          embed / reranker models onto this same server; they are not the vision tower of the VLM you Served.
+          defaults. Send sampling on the request.
         </p>
       ) : null}
       <EngineCard />
@@ -137,6 +152,8 @@ function EngineCard() {
     { value: "lm", label: "mlx-lm" },
     { value: "vlm", label: "mlx-vlm" },
     { value: "embed", label: "embed" },
+    { value: "tts", label: "tts" },
+    { value: "stt", label: "stt" },
   ];
 
   return (

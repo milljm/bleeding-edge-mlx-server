@@ -19,6 +19,7 @@ import {
 import { loadTarget, publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
+import type { EngineKind } from "@/lib/flags";
 
 type ChatTurn = PlaygroundTurn;
 
@@ -30,6 +31,9 @@ export function Playground() {
 
   if (model?.engine === "embed") {
     return <EmbedPlayground live={live} loadedCount={served.length} />;
+  }
+  if (model?.engine === "tts" || model?.engine === "stt") {
+    return <AudioHint engine={model.engine} live={live} />;
   }
 
   return <ChatPlayground live={live} />;
@@ -155,6 +159,19 @@ function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: nu
           </Button>
         )}
       </form>
+    </div>
+  );
+}
+
+function AudioHint({ engine, live }: { engine: EngineKind; live: boolean }) {
+  const route = engine === "tts" ? "/v1/audio/speech" : "/v1/audio/transcriptions";
+  return (
+    <div className="flex flex-1 flex-col items-start justify-center">
+      <p className="max-w-md text-sm text-muted-foreground">
+        {live
+          ? `Playground is text-only. This ${engine.toUpperCase()} model is served — POST ${route} from any OpenAI-compatible client.`
+          : `Serve this ${engine.toUpperCase()} model to expose ${route}. Playground stays text-only.`}
+      </p>
     </div>
   );
 }

@@ -54,6 +54,8 @@ mlx-edge serve --host 127.0.0.1 --port 8080
 mlx-edge load --engine lm --model mlx-community/Qwen3-8B-4bit
 mlx-edge load --engine vlm --model mlx-community/Qwen2.5-VL-7B-Instruct-4bit
 mlx-edge load --engine embed --model mlx-community/Qwen3-Embedding-0.6B-4bit
+mlx-edge load --engine tts --model mlx-community/Kokoro-82M-4bit
+mlx-edge load --engine stt --model mlx-community/whisper-tiny-mlx
 ```
 
 Or preload at start:
@@ -62,7 +64,9 @@ Or preload at start:
 edge-gui --host 127.0.0.1 --port 8080 \
   --lm mlx-community/Qwen3-8B-4bit \
   --vlm mlx-community/Qwen2.5-VL-7B-Instruct-4bit \
-  --embed mlx-community/Qwen3-Embedding-0.6B-4bit
+  --embed mlx-community/Qwen3-Embedding-0.6B-4bit \
+  --tts mlx-community/Kokoro-82M-4bit \
+  --stt mlx-community/whisper-tiny-mlx
 ```
 
 Unload one without touching the others:

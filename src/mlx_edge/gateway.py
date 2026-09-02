@@ -95,6 +95,29 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict[str, Any]:
     return data
 
 
+def _read_raw(handler: BaseHTTPRequestHandler) -> bytes:
+    length = int(handler.headers.get("Content-Length") or 0)
+    if length <= 0:
+        return b""
+    return handler.rfile.read(length)
+
+
+def _multipart_field(raw: bytes, name: str) -> str:
+    marker = f'name="{name}"'.encode("utf-8")
+    idx = raw.find(marker)
+    if idx < 0:
+        return ""
+    rest = raw[idx + len(marker) :]
+    sep = rest.find(b"\r\n\r\n")
+    if sep < 0:
+        return ""
+    value = rest[sep + 4 :]
+    end = value.find(b"\r\n")
+    if end < 0:
+        return value.decode("utf-8", "replace").strip()
+    return value[:end].decode("utf-8", "replace").strip()
+
+
 def wants_stream(body: dict[str, Any]) -> bool:
     value = body.get("stream")
     if value is True or value == 1:
@@ -288,6 +311,17 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/embeddings", "/embeddings"}:
                 self._embeddings()
                 return
+            if path in {"/v1/audio/speech", "/audio/speech"}:
+                self._audio("tts")
+                return
+            if path in {
+                "/v1/audio/transcriptions",
+                "/audio/transcriptions",
+                "/v1/audio/translations",
+                "/audio/translations",
+            }:
+                self._audio("stt")
+                return
             if path in {"/v1/stop", "/v1/chat/stop", "/stop"}:
                 self._stop()
                 return
@@ -312,8 +346,8 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             engine = str(body.get("engine") or "lm")
             model = str(body.get("model") or "").strip()
             extra = body.get("args") or []
-            if engine not in {"lm", "vlm", "embed"}:
-                self._json({"error": {"message": "engine must be lm, vlm, or embed", "type": "invalid_request_error"}}, 400)
+            if engine not in {"lm", "vlm", "embed", "tts", "stt"}:
+                self._json({"error": {"message": "engine must be lm, vlm, embed, tts, or stt", "type": "invalid_request_error"}}, 400)
                 return
             if not model:
                 self._json({"error": {"message": "model is required", "type": "invalid_request_error"}}, 400)
@@ -503,7 +537,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
         def _resolve(self, requested: object, *, kind: str) -> LoadedModel | None:
             loaded = pool.list()
             if not loaded:
-                hint = "embed" if kind == "embed" else "lm"
+                hint = kind if kind in {"embed", "tts", "stt"} else "lm"
                 self._json(
                     {
                         "error": {
@@ -515,13 +549,13 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 )
                 return None
             needle = str(requested).strip() if requested else ""
-            if kind == "embed" and not needle:
-                item = next((m for m in loaded if m.engine == "embed"), None)
+            if kind in {"embed", "tts", "stt"} and not needle:
+                item = next((m for m in loaded if m.engine == kind), None)
                 if not item:
                     self._json(
                         {
                             "error": {
-                                "message": "No embedding model loaded. mlx-edge load --engine embed --model …",
+                                "message": f"No {kind} model loaded. mlx-edge load --engine {kind} --model …",
                                 "type": "server_error",
                             }
                         },
@@ -549,13 +583,14 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     503,
                 )
                 return None
-            if kind == "embed" and item.engine != "embed":
+            if kind in {"embed", "tts", "stt"} and item.engine != kind:
+                label = {"embed": "embeddings", "tts": "speech", "stt": "transcriptions"}[kind]
                 self._json(
                     {
                         "error": {
                             "message": (
-                                f"{item.public_id} does not serve embeddings. "
-                                "Serve a model tagged embed (Qwen3-Embedding, bge, …)."
+                                f"{item.public_id} does not serve {label}. "
+                                f"Serve a model tagged {kind}."
                             ),
                             "type": "invalid_request_error",
                         }
@@ -563,11 +598,16 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     400,
                 )
                 return None
-            if kind == "chat" and item.engine == "embed":
+            if kind == "chat" and item.engine in {"embed", "tts", "stt"}:
+                dest = {
+                    "embed": "POST /v1/embeddings",
+                    "tts": "POST /v1/audio/speech",
+                    "stt": "POST /v1/audio/transcriptions",
+                }[item.engine]
                 self._json(
                     {
                         "error": {
-                            "message": f"{item.public_id} is an embedding model. POST /v1/embeddings instead.",
+                            "message": f"{item.public_id} is a {item.engine} model. {dest} instead.",
                             "type": "invalid_request_error",
                         }
                     },
@@ -625,6 +665,46 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     self,
                     item,
                     json.dumps(body).encode("utf-8"),
+                    stream=False,
+                    progress=pool.progress,
+                    job=job,
+                    logs=pool.logs,
+                )
+            finally:
+                pool.untrack_request(job)
+
+        def _audio(self, kind: str) -> None:
+            ctype = (self.headers.get("Content-Type") or "").lower()
+            multipart = "multipart/" in ctype
+            raw: bytes
+            requested: object = None
+            if multipart:
+                raw = _read_raw(self)
+                requested = _multipart_field(raw, "model")
+            else:
+                try:
+                    body = _read_json(self)
+                except ValueError as exc:
+                    self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                    return
+                requested = body.get("model")
+            item = self._resolve(requested, kind=kind)
+            if item is None:
+                return
+            if multipart:
+                needle = str(requested or "").strip()
+                if needle and needle != item.model:
+                    raw = raw.replace(needle.encode("utf-8"), item.model.encode("utf-8"), 1)
+            else:
+                body["model"] = item.model
+                raw = json.dumps(body).encode("utf-8")
+            pool.progress.begin(item.public_id, item.engine, stream=False)
+            job = pool.track_request(item.public_id)
+            try:
+                _proxy_to(
+                    self,
+                    item,
+                    raw,
                     stream=False,
                     progress=pool.progress,
                     job=job,

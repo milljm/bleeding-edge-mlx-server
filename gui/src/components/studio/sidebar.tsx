@@ -375,7 +375,7 @@ function ModelCard({
           <span className="relative min-w-0 flex-1">
             <span className="block truncate text-sm font-medium">{model.name}</span>
             <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
-              <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "embed" ? "accent" : "default"}>
+              <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "lm" ? "default" : "accent"}>
                 {model.engine}
               </Badge>
               <span className="text-xs text-muted-foreground">
