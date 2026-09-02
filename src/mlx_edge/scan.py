@@ -277,15 +277,11 @@ def _has_chat_template(path: Path) -> bool:
 def _is_model_dir(path: Path) -> bool:
     if path.name in HUB_INTERNALS:
         return False
-    has_cfg = any((path / name).is_file() for name in CONFIG_NAMES)
-    if not has_cfg and not _is_hub_snapshot(path):
+    # Hub snapshots without config.json are original PyTorch dumps
+    # (hexgrad/Kokoro-82M, ResembleAI/chatterbox). mlx-* need a typed config.
+    if not any((path / name).is_file() for name in CONFIG_NAMES):
         return False
     return _has_weights(path)
-
-
-def _is_hub_snapshot(path: Path) -> bool:
-    parent = path.parent
-    return parent.name == "snapshots" and parent.parent.name.startswith("models--")
 
 
 def _has_weights(path: Path, depth: int = 0) -> bool:
