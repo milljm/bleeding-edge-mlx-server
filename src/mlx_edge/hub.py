@@ -172,6 +172,48 @@ def hub_folder(repo: str) -> Path:
     return hf_hub_root() / ("models--" + repo.replace("/", "--"))
 
 
+def resolve_hub_delete_target(raw: str) -> Path:
+    """Only models--* folders under the Hugging Face hub cache."""
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("repo or cache path is required")
+    root = hf_hub_root().resolve()
+    candidate = Path(text).expanduser()
+    if candidate.exists():
+        cur = candidate.resolve()
+        if cur.is_file():
+            cur = cur.parent
+        while True:
+            if cur.name.startswith("models--") and (cur.parent == root or root in cur.parents):
+                return cur
+            if cur == cur.parent:
+                break
+            cur = cur.parent
+        raise PermissionError("Edge only deletes Hugging Face cache models, not LM Studio or Ollama files")
+    repo = parse_repo(text)
+    folder = hub_folder(repo).resolve()
+    if folder.parent != root and root not in folder.parents:
+        raise PermissionError("Edge only deletes Hugging Face cache models")
+    if not folder.name.startswith("models--"):
+        raise PermissionError("not a Hugging Face hub model folder")
+    return folder
+
+
+def delete_hub_repo(raw: str, pool: Any | None = None) -> dict[str, Any]:
+    import shutil
+
+    folder = resolve_hub_delete_target(raw)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"not on disk: {folder}")
+    repo = folder.name.removeprefix("models--").replace("--", "/", 1)
+    if pool is not None:
+        item = pool.resolve(repo) or pool.resolve(raw) or pool.resolve(str(folder))
+        if item is not None:
+            pool.unload(item.id)
+    shutil.rmtree(folder)
+    return {"ok": True, "repo": repo, "path": str(folder)}
+
+
 def is_active_hub(path: Path) -> bool:
     return JOB.is_active(path)
 

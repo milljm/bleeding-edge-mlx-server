@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RefreshCw, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,9 +8,9 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { engineLabel } from "@/lib/command";
-import { fetchTemplate, modelIsLive } from "@/lib/edge-api";
+import { fetchTemplate, modelIsLive, postHubDelete } from "@/lib/edge-api";
 import { flagsDirty, flagsFor, type EngineKind, type FlagDef, type FlagGroup } from "@/lib/flags";
-import { flagKey, formatContext, loadTarget } from "@/lib/models";
+import { flagKey, formatContext, loadTarget, modelOrigin, originLabel } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -135,6 +136,7 @@ export function FlagPanel() {
       ) : null}
       <EngineCard />
       {model.engine === "lm" ? <TemplateCard /> : null}
+      <DeleteModelCard />
       {groups.map((group) => {
         const defs = visible.filter((d) => (d.group ?? "server") === group);
         if (defs.length === 0) return null;
@@ -287,6 +289,77 @@ function TemplateCard() {
       {override ? (
         <p className="text-xs text-muted-foreground">{override.length.toLocaleString("en-US")} characters · Reload to apply</p>
       ) : null}
+    </section>
+  );
+}
+
+function DeleteModelCard() {
+  const model = useStudio((s) => s.selected());
+  const served = useStudio((s) => s.served);
+  const stopServe = useStudio((s) => s.stopServe);
+  const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setConfirm(false);
+  }, [model?.id]);
+
+  if (!model) return null;
+  const origin = modelOrigin(model);
+  const live = modelIsLive(served, model);
+
+  async function remove() {
+    if (!model || origin !== "huggingface") return;
+    setBusy(true);
+    try {
+      if (live) await stopServe(model.id);
+      await postHubDelete(model.repo);
+      toast.success(`Removed ${model.repo} from the Hugging Face cache`);
+      setConfirm(false);
+      await scanWatchDirs();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const copy =
+    origin === "lmstudio"
+      ? "This checkpoint lives in LM Studio’s models folder. Remove it from LM Studio — Edge will not delete those files."
+      : origin === "ollama"
+        ? "This checkpoint lives in Ollama’s models folder. Remove it with ollama rm or the Ollama app — Edge will not delete those files."
+        : origin === "huggingface"
+          ? "Edge downloaded this into the Hugging Face cache, so Edge can remove it. That deletes the local copy only, not the Hub repo."
+          : "This folder is one you asked Edge to watch. Delete it on disk, then Rescan — Edge will not remove files outside the Hugging Face cache.";
+
+  return (
+    <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
+      <div>
+        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Delete model</h3>
+        <p className="mt-1 max-w-lg text-sm text-muted-foreground">{copy}</p>
+      </div>
+      {origin === "huggingface" ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {confirm ? (
+            <>
+              <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={() => void remove()}>
+                {busy ? "Removing…" : `Really delete ${model.name}?`}
+              </Button>
+              <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setConfirm(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button type="button" variant="secondary" size="sm" onClick={() => setConfirm(true)}>
+              Remove from Hugging Face cache
+            </Button>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Source: {originLabel(origin)}</p>
+      )}
     </section>
   );
 }

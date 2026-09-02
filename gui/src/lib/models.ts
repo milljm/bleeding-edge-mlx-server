@@ -38,6 +38,25 @@ export function migrateWatchDirs(dirs?: string[] | null): string[] {
   return [...new Set(dirs.map((d) => d.trim()).filter((d) => d.length > 0))];
 }
 
+export type ModelOrigin = "huggingface" | "lmstudio" | "ollama" | "local";
+
+export function modelOrigin(model: Pick<ModelRec, "path" | "watchDir" | "repo">): ModelOrigin {
+  const blob = `${model.watchDir} ${model.path} ${model.repo}`.replace(/\\/g, "/").toLowerCase();
+  if (blob.includes("huggingface") || blob.includes("models--") || /\/hub\//.test(blob)) return "huggingface";
+  if (blob.includes("lmstudio") || blob.includes(".lmstudio")) return "lmstudio";
+  if (blob.includes("ollama")) return "ollama";
+  return "local";
+}
+
+export function originLabel(origin: ModelOrigin): string {
+  return {
+    huggingface: "Hugging Face",
+    lmstudio: "LM Studio",
+    ollama: "Ollama",
+    local: "Local",
+  }[origin];
+}
+
 /** Open the upstream model page. Only when the watch path is clearly Hub or Ollama. */
 export function modelCardLink(model: Pick<ModelRec, "repo" | "path" | "watchDir" | "name">): {
   href: string;

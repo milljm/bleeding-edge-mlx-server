@@ -282,6 +282,16 @@ export async function postHubCancel(): Promise<HubProgress> {
   return (await parseJson(res)) as HubProgress;
 }
 
+export async function postHubDelete(repo: string): Promise<{ repo: string; path: string }> {
+  const res = await fetch("/v1/hub/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo }),
+  });
+  const body = (await parseJson(res)) as { repo?: string; path?: string };
+  return { repo: body.repo ?? repo, path: body.path ?? "" };
+}
+
 export type ProgressPhase = "idle" | "loading" | "prefill" | "decode" | "done" | "error";
 export type ProgressStatus = "ready" | "processing" | "complete" | "error";
 
