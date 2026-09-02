@@ -201,15 +201,33 @@ export type HubQuant = { id: string; quant: string; downloads: number };
 
 export type HubProgress = {
   repo: string;
+  name: string;
   phase: "idle" | "downloading" | "paused" | "done" | "error" | "cancelled";
   bytes: number;
   total: number;
   ratio: number;
+  pct: number | null;
   detail: string;
   error: string;
   path: string;
   token: boolean;
 };
+
+function asHubProgress(body: Partial<HubProgress> | null | undefined): HubProgress {
+  return {
+    repo: String(body?.repo || ""),
+    name: String(body?.name || (body?.repo || "").split("/").pop() || ""),
+    phase: (body?.phase as HubProgress["phase"]) || "idle",
+    bytes: Number(body?.bytes || 0),
+    total: Number(body?.total || 0),
+    ratio: Number(body?.ratio || 0),
+    pct: body?.pct == null || Number.isNaN(Number(body.pct)) ? null : Number(body.pct),
+    detail: String(body?.detail || ""),
+    error: String(body?.error || ""),
+    path: String(body?.path || ""),
+    token: Boolean(body?.token),
+  };
+}
 
 export async function getHubStatus(): Promise<{ token: boolean; help: string }> {
   const res = await fetch("/v1/hub");
@@ -217,20 +235,11 @@ export async function getHubStatus(): Promise<{ token: boolean; help: string }> 
   return { token: Boolean(body.token), help: String(body.help || "") };
 }
 
-export async function getHubProgress(): Promise<HubProgress> {
+export async function getHubProgress(): Promise<{ token: boolean; jobs: HubProgress[] }> {
   const res = await fetch("/v1/hub/progress");
-  const body = (await parseJson(res)) as Partial<HubProgress>;
-  return {
-    repo: String(body.repo || ""),
-    phase: (body.phase as HubProgress["phase"]) || "idle",
-    bytes: Number(body.bytes || 0),
-    total: Number(body.total || 0),
-    ratio: Number(body.ratio || 0),
-    detail: String(body.detail || ""),
-    error: String(body.error || ""),
-    path: String(body.path || ""),
-    token: Boolean(body.token),
-  };
+  const body = (await parseJson(res)) as { token?: boolean; jobs?: Partial<HubProgress>[] };
+  const jobs = Array.isArray(body.jobs) ? body.jobs.map((row) => asHubProgress(row)) : [];
+  return { token: Boolean(body.token), jobs };
 }
 
 export async function postHubSearch(query: string): Promise<{
@@ -264,22 +273,34 @@ export async function postHubDownload(repo: string): Promise<HubProgress> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ repo }),
   });
-  return (await parseJson(res)) as HubProgress;
+  return asHubProgress((await parseJson(res)) as Partial<HubProgress>);
 }
 
-export async function postHubPause(): Promise<HubProgress> {
-  const res = await fetch("/v1/hub/pause", { method: "POST" });
-  return (await parseJson(res)) as HubProgress;
+export async function postHubPause(repo: string): Promise<HubProgress> {
+  const res = await fetch("/v1/hub/pause", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo }),
+  });
+  return asHubProgress((await parseJson(res)) as Partial<HubProgress>);
 }
 
-export async function postHubResume(): Promise<HubProgress> {
-  const res = await fetch("/v1/hub/resume", { method: "POST" });
-  return (await parseJson(res)) as HubProgress;
+export async function postHubResume(repo: string): Promise<HubProgress> {
+  const res = await fetch("/v1/hub/resume", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo }),
+  });
+  return asHubProgress((await parseJson(res)) as Partial<HubProgress>);
 }
 
-export async function postHubCancel(): Promise<HubProgress> {
-  const res = await fetch("/v1/hub/cancel", { method: "POST" });
-  return (await parseJson(res)) as HubProgress;
+export async function postHubCancel(repo: string): Promise<HubProgress> {
+  const res = await fetch("/v1/hub/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo }),
+  });
+  return asHubProgress((await parseJson(res)) as Partial<HubProgress>);
 }
 
 export async function postHubDelete(repo: string): Promise<{ repo: string; path: string }> {

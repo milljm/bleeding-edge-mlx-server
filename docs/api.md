@@ -90,8 +90,9 @@ basename (any case), `org/name`, or the path.
 - `GET /v1/hub` — `{token, help}` whether `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`
   is set (the value is never returned). Search/download require a token.
   `POST /v1/hub/search` `{query}` lists MLX quants. `POST /v1/hub/download`
-  `{repo}` starts `snapshot_download` in a child process (poll `GET /v1/hub/progress`
-  for byte-level ratio + `detail`). Pause is SIGSTOP. Resume is SIGCONT.
+  `{repo}` starts `snapshot_download` in a child process. Several repos can
+  run at once (same repo is a no-op). Poll `GET /v1/hub/progress` for `{jobs}`
+  (byte-level ratio + `pct` + `detail`). Pause is SIGSTOP. Resume is SIGCONT.
   `POST /v1/hub/pause` / `resume` / `cancel`. `POST /v1/hub/delete` `{repo}`
   removes a `models--*` folder under the Hugging Face cache only (not LM Studio
   or Ollama). Incomplete hub snapshots stay
