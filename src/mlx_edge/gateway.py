@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from mlx_edge.channels import HarmonyFilter, assume_think_start, rewrite_completion_payload
+from mlx_edge.playground import PlaygroundStore
 from mlx_edge.pool import Inflight, LoadedModel, ModelPool
 from mlx_edge.progress import ProgressTracker
 
@@ -127,6 +128,7 @@ def prepare_chat_body(body: dict[str, Any], item: LoadedModel) -> dict[str, Any]
 
 def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[BaseHTTPRequestHandler]:
     web = Path(static_dir).resolve() if static_dir else None
+    playground = PlaygroundStore()
 
     class GatewayHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
@@ -242,6 +244,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/template", "/v1/templates"}:
                 self._template_inspect()
                 return
+            if path in {"/v1/playground", "/v1/chat/session"}:
+                self._playground_get()
+                return
             if self._static(raw_path):
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
@@ -250,6 +255,16 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             path = urlparse(self.path).path.rstrip("/") or "/"
             if path in {"/v1/prefs", "/v1/studio"}:
                 self._prefs_save()
+                return
+            if path in {"/v1/playground", "/v1/chat/session"}:
+                self._playground_put()
+                return
+            self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            path = urlparse(self.path).path.rstrip("/") or "/"
+            if path in {"/v1/playground", "/v1/chat/session"}:
+                self._playground_clear()
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
 
@@ -282,6 +297,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/logs/clear", "/v1/logs"}:
                 pool.logs.clear()
                 self._json({"ok": True, "seq": pool.logs.seq()})
+                return
+            if path in {"/v1/playground/clear"}:
+                self._playground_clear()
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
 
@@ -353,6 +371,32 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             from mlx_edge.prefs import save_prefs
 
             self._json(save_prefs(body))
+
+        def _playground_get(self) -> None:
+            self._json({"turns": playground.get()})
+
+        def _playground_put(self) -> None:
+            try:
+                body = _read_json(self)
+            except ValueError as exc:
+                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                return
+            turns = body.get("turns")
+            if not isinstance(turns, list):
+                self._json({"error": {"message": "turns must be a list", "type": "invalid_request_error"}}, 400)
+                return
+            saved = playground.put(turns)
+            self._json({"ok": True, "turns": saved})
+
+        def _playground_clear(self) -> None:
+            if int(self.headers.get("Content-Length") or 0) > 0:
+                try:
+                    _read_json(self)
+                except ValueError as exc:
+                    self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+                    return
+            playground.clear()
+            self._json({"ok": True})
 
         def _progress(self) -> None:
             qs = parse_qs(urlparse(self.path).query)

@@ -9,6 +9,7 @@ import {
   resolveTheme,
   type ThemePref,
 } from "@/lib/theme";
+import { applySyntax, readSyntaxPref } from "@/lib/chat/syntax";
 import { cn } from "@/lib/utils";
 
 const OPTIONS: { value: ThemePref; label: string; icon: typeof Sun }[] = [
@@ -23,13 +24,13 @@ export function ThemeToggle() {
   useEffect(() => {
     const stored = readThemePref();
     setPref(stored);
-    applyTheme(stored);
+    applySyntax(readSyntaxPref(), applyTheme(stored));
   }, []);
 
   useEffect(() => {
     if (pref !== "system") return;
     const mq = window.matchMedia("(prefers-color-scheme: light)");
-    const onChange = () => applyTheme("system");
+    const onChange = () => applySyntax(readSyntaxPref(), applyTheme("system"));
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, [pref]);
@@ -37,7 +38,7 @@ export function ThemeToggle() {
   function choose(next: ThemePref) {
     setPref(next);
     persistThemePref(next);
-    applyTheme(next);
+    applySyntax(readSyntaxPref(), applyTheme(next));
   }
 
   const resolved = resolveTheme(pref);
