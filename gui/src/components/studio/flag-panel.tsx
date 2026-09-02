@@ -13,12 +13,14 @@ import { flagKey, formatContext, loadTarget } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
+const SEE_ENDPOINT = " See Endpoint for more information on how to use this model.";
+
 const SPECIAL_BLURB: Partial<Record<EngineKind, string>> = {
-  embed: " Embedding models answer POST /v1/embeddings — they do not chat.",
-  tts: " TTS models answer POST /v1/audio/speech — Playground stays text-only.",
-  stt: " STT models answer POST /v1/audio/transcriptions — Playground stays text-only.",
-  rerank: " Rerankers answer POST /v1/rerank — Playground stays text-only.",
-  image: " Image models answer POST /v1/images/generations — Playground stays text-only.",
+  embed: " Embedding models answer POST /v1/embeddings — they do not chat." + SEE_ENDPOINT,
+  tts: " TTS models answer POST /v1/audio/speech — Playground stays text-only." + SEE_ENDPOINT,
+  stt: " STT models answer POST /v1/audio/transcriptions — Playground stays text-only." + SEE_ENDPOINT,
+  rerank: " Rerankers answer POST /v1/rerank — Playground stays text-only." + SEE_ENDPOINT,
+  image: " Image models answer POST /v1/images/generations — Playground stays text-only." + SEE_ENDPOINT,
 };
 
 const GROUP_LABEL: Record<FlagGroup, string> = {
@@ -96,28 +98,32 @@ export function FlagPanel() {
         <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
           This is an embedding model. Serve it, then POST <span className="font-mono text-foreground">/v1/embeddings</span>.
           Keep a chat model loaded too — RAG does not unload it.
+          See Endpoint for more information on how to use this model.
         </p>
       ) : model.engine === "tts" ? (
         <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
           This is a text-to-speech model. Serve it, then POST{" "}
           <span className="font-mono text-foreground">/v1/audio/speech</span> with{" "}
           <span className="font-mono text-foreground">{`{"model","input"}`}</span>. Playground stays text-only.
+          See Endpoint for more information on how to use this model.
         </p>
       ) : model.engine === "stt" ? (
         <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
           This is a speech-to-text model. Serve it, then POST{" "}
           <span className="font-mono text-foreground">/v1/audio/transcriptions</span> (multipart file + model).
-          Playground stays text-only.
+          Playground stays text-only. See Endpoint for more information on how to use this model.
         </p>
       ) : model.engine === "rerank" ? (
         <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
           This is a reranker. Serve it, then POST <span className="font-mono text-foreground">/v1/rerank</span> with{" "}
           <span className="font-mono text-foreground">{`{"query","documents"}`}</span>. Playground stays text-only.
+          See Endpoint for more information on how to use this model.
         </p>
       ) : model.engine === "image" ? (
         <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
           This is an image-generation model. Serve it, then POST{" "}
           <span className="font-mono text-foreground">/v1/images/generations</span>. Playground stays text-only.
+          See Endpoint for more information on how to use this model.
         </p>
       ) : model.engine === "vlm" ? (
         <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">

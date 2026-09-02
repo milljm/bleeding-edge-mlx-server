@@ -55,8 +55,18 @@ def normalize_name(name: str) -> str:
 
 
 def basename_id(path: str) -> str:
-    name = Path(path.replace("\\", "/").rstrip("/")).name
-    return name or path
+    p = Path(path.replace("\\", "/").rstrip("/"))
+    # Hugging Face hub checkout is .../models--org--name/snapshots/<sha>.
+    # Advertise the repo name, not the commit.
+    if p.parent.name == "snapshots":
+        hub = p.parent.parent.name
+        if hub.startswith("models--"):
+            body = hub[len("models--") :]
+            if "--" in body:
+                return body.split("--", 1)[-1]
+            if body:
+                return body
+    return p.name or path
 
 
 def unique_public_id(path: str, taken: list[str]) -> str:
@@ -72,7 +82,13 @@ def unique_public_id(path: str, taken: list[str]) -> str:
 
 
 def names_for(item: "LoadedModel") -> list[str]:
-    out = [item.id, item.model, item.public_id, basename_id(item.model), basename_id(item.public_id)]
+    out = [
+        item.id,
+        item.model,
+        item.public_id,
+        basename_id(item.model),
+        Path(item.model.replace("\\", "/").rstrip("/")).name,
+    ]
     return [n for n in out if n]
 
 

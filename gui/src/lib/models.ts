@@ -42,6 +42,8 @@ export function slugModelId(engine: EngineKind, repo: string, source: ModelRec["
 export function publicName(model: Pick<ModelRec, "path" | "repo" | "name">) {
   const fromPath = model.path.split(/[/\\]/).filter(Boolean).pop();
   const fromRepo = model.repo.split(/[/\\]/).filter(Boolean).pop();
+  // Hugging Face snapshots are content-addressed SHAs — clients want chatterbox, not 05e904….
+  if (fromPath && /^[0-9a-f]{7,40}$/i.test(fromPath)) return fromRepo || model.name || fromPath;
   return fromPath || fromRepo || model.name;
 }
 
