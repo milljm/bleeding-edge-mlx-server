@@ -95,8 +95,15 @@ export function loadTarget(model: Pick<ModelRec, "source" | "path" | "repo">) {
   return model.source === "manual" ? model.repo : model.path || model.repo;
 }
 
-/** Loaded / in-use models float to the top; scan order is kept inside each group. */
-export function sortLoadedFirst<T>(models: T[], isLive: (model: T) => boolean): T[] {
-  return [...models].sort((a, b) => Number(isLive(b)) - Number(isLive(a)));
+/** Loaded / in-use models float to the top; both groups are A–Z (a/A together). */
+export function sortLoadedFirst<T extends { name: string }>(
+  models: T[],
+  isLive: (model: T) => boolean,
+): T[] {
+  return [...models].sort((a, b) => {
+    const live = Number(isLive(b)) - Number(isLive(a));
+    if (live !== 0) return live;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
 }
 
