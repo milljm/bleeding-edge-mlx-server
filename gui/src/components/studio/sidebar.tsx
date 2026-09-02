@@ -1,15 +1,17 @@
 import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ChevronRight, Folder, PanelLeft, Play, Plus, RefreshCw, Search, Square, Trash2 } from "lucide-react";
+import { ChevronRight, CircleStop, Folder, PanelLeft, Play, Plus, RefreshCw, Search, Square, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatContext, DIR_PLACEHOLDER, sortLoadedFirst, type ModelRec } from "@/lib/models";
+import { formatContext, DIR_PLACEHOLDER, loadTarget, sortLoadedFirst, type ModelRec } from "@/lib/models";
 import {
   modelGeneration,
   modelIsBusy,
   modelIsLive,
+  modelIsPrefill,
   modelLoadProgress,
+  postStop,
   type ProgressSnapshot,
 } from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
@@ -177,10 +179,11 @@ export function Sidebar({
                   }}
                   onToggle={async () => {
                     try {
-                      if (modelIsLive(served, model)) await stopServe(model.id);
+                      if (modelIsBusy(progress, model)) await postStop(loadTarget(model));
+                      else if (modelIsLive(served, model)) await stopServe(model.id);
                       else await startServe(model.id);
                     } catch (err) {
-                      toast.error(err instanceof Error ? err.message : "Serve failed");
+                      toast.error(err instanceof Error ? err.message : "Failed");
                     }
                   }}
                 />
@@ -306,12 +309,25 @@ function ModelCard({
   const tinted = live && !loading;
   const context = formatContext(model.context);
   const gen = modelGeneration(progress, model);
+  const prefill = modelIsPrefill(progress, model);
+  const status = prefill
+    ? "processing"
+    : busy
+      ? "generating"
+      : loading
+        ? "loading"
+        : live
+          ? "loaded"
+          : error
+            ? "failed"
+            : undefined;
+  const controlLabel = busy ? `Stop ${model.name}` : live ? `Unload ${model.name}` : `Serve ${model.name}`;
 
   return (
     <li className="relative overflow-visible">
       <div
         className={cn(
-          "relative flex w-full items-start gap-1 rounded-lg ring-inset transition-colors duration-150",
+          "relative flex w-full overflow-visible rounded-lg ring-inset transition-colors duration-150",
           tinted && "bg-live/20 text-foreground",
           error && !tinted && !loading && "bg-destructive/40 text-foreground ring-1 ring-destructive/60",
           loading && "text-foreground",
@@ -329,18 +345,18 @@ function ModelCard({
             aria-valuenow={Math.round(fill * 100)}
           />
         ) : null}
+        <TokenBubble tokens={gen.tokens} generating={gen.generating} />
         <button
           type="button"
           onClick={onSelect}
           aria-busy={loading || busy || undefined}
           className={cn(
-            "relative flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-2 text-left",
+            "relative flex min-w-0 flex-1 items-start gap-2 rounded-l-lg px-2 py-2 text-left",
             tinted && "hover:bg-live/10",
             error && !tinted && !loading && "hover:bg-destructive/20",
             !tinted && !error && !loading && "hover:bg-accent",
           )}
         >
-          <TokenBubble tokens={gen.tokens} generating={gen.generating} />
           <span
             className={cn(
               "relative mt-1.5 size-1.5 shrink-0 rounded-full",
@@ -354,7 +370,7 @@ function ModelCard({
                       ? "bg-destructive"
                       : "bg-border",
             )}
-            title={busy ? "generating" : loading ? "loading" : live ? "loaded" : error ? "failed" : undefined}
+            title={status}
           />
           <span className="relative min-w-0 flex-1">
             <span className="block truncate text-sm font-medium">{model.name}</span>
@@ -363,28 +379,36 @@ function ModelCard({
                 {model.engine}
               </Badge>
               <span className="text-xs text-muted-foreground">
-                {busy ? "generating · " : loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}
+                {status ? `${status} · ` : ""}
                 {model.quant} · {model.size}
                 {context ? ` · ${context}` : ""}
               </span>
             </span>
           </span>
         </button>
-        <Button
+        <button
           type="button"
-          variant={live ? "destructive" : "secondary"}
-          size="icon-sm"
-          className="relative z-[1] mt-1 mr-1 shrink-0"
           disabled={loading}
-          aria-label={live ? `Unload ${model.name}` : `Serve ${model.name}`}
+          aria-label={controlLabel}
+          title={controlLabel}
+          className={cn(
+            "relative z-[1] flex w-9 shrink-0 items-center justify-center self-stretch rounded-r-lg border-l border-border/50",
+            "transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+            loading && "pointer-events-none opacity-40",
+            busy || live
+              ? "bg-destructive text-primary-foreground hover:opacity-90"
+              : "bg-secondary text-foreground hover:bg-accent",
+          )}
           onClick={() => void onToggle()}
         >
-          {live ? (
+          {busy ? (
+            <CircleStop className="size-3.5" />
+          ) : live ? (
             <Square className="size-3.5" />
           ) : (
             <Play className={cn("size-3.5", loading && "animate-pulse")} />
           )}
-        </Button>
+        </button>
       </div>
     </li>
   );

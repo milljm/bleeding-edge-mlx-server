@@ -254,6 +254,14 @@ export function modelIsBusy(
   return row.status === "processing" && (row.phase === "prefill" || row.phase === "decode");
 }
 
+export function modelIsPrefill(
+  snap: ProgressSnapshot | null | undefined,
+  model?: { id: string; repo: string; path?: string; name?: string } | null,
+): boolean {
+  const row = progressRow(snap, model);
+  return Boolean(row && row.status === "processing" && row.phase === "prefill");
+}
+
 export function modelGeneration(
   snap: ProgressSnapshot | null | undefined,
   model?: { id: string; repo: string; path?: string; name?: string } | null,

@@ -208,7 +208,7 @@ html[data-theme="light"] {
     pointer-events: none;
     position: absolute;
     top: -0.35rem;
-    right: -0.2rem;
+    right: 1.35rem;
     z-index: 3;
     border-radius: 0.4rem;
     padding: 1px 0.4rem;
