@@ -165,23 +165,23 @@ export async function postStop(model?: string) {
 
 export type PlaygroundTurn = { role: "user" | "assistant"; text: string; thinking?: string };
 
-export async function getPlayground(model: string): Promise<PlaygroundTurn[]> {
-  const res = await fetch(`/v1/playground?model=${encodeURIComponent(model)}`);
+export async function getPlayground(): Promise<PlaygroundTurn[]> {
+  const res = await fetch("/v1/playground");
   const body = (await parseJson(res)) as { turns?: PlaygroundTurn[] };
   return Array.isArray(body.turns) ? body.turns.filter((t) => t && (t.role === "user" || t.role === "assistant")) : [];
 }
 
-export async function putPlayground(model: string, turns: PlaygroundTurn[]) {
+export async function putPlayground(turns: PlaygroundTurn[]) {
   const res = await fetch("/v1/playground", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, turns }),
+    body: JSON.stringify({ turns }),
   });
   return parseJson(res);
 }
 
-export async function clearPlayground(model: string) {
-  const res = await fetch(`/v1/playground?model=${encodeURIComponent(model)}`, { method: "DELETE" });
+export async function clearPlayground() {
+  const res = await fetch("/v1/playground", { method: "DELETE" });
   return parseJson(res);
 }
 

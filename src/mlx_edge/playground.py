@@ -1,5 +1,8 @@
-"""In-RAM Playground transcripts. Lives with the gateway process — reload keeps
-them, quitting Edge drops them. Never written to disk."""
+"""In-RAM Playground transcript. One rolling thread shared by every model.
+
+Lives with the gateway process — a browser reload keeps it, quitting Edge
+drops it. Never written to disk.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +10,6 @@ import threading
 from typing import Any
 
 MAX_TURNS = 200
-
-
-def key_for(name: str) -> str:
-    return name.strip().replace("\\", "/").rstrip("/").split("/")[-1].lower()
 
 
 def _clean_turn(raw: Any) -> dict[str, str] | None:
@@ -30,16 +29,13 @@ def _clean_turn(raw: Any) -> dict[str, str] | None:
 class PlaygroundStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._by_model: dict[str, list[dict[str, str]]] = {}
+        self._turns: list[dict[str, str]] = []
 
-    def get(self, model: str) -> list[dict[str, str]]:
-        key = key_for(model)
-        if not key:
-            return []
+    def get(self) -> list[dict[str, str]]:
         with self._lock:
-            return list(self._by_model.get(key, []))
+            return list(self._turns)
 
-    def put(self, model: str, turns: list[Any]) -> list[dict[str, str]]:
+    def put(self, turns: list[Any]) -> list[dict[str, str]]:
         cleaned: list[dict[str, str]] = []
         for item in turns:
             row = _clean_turn(item)
@@ -48,19 +44,10 @@ class PlaygroundStore:
             cleaned.append(row)
             if len(cleaned) >= MAX_TURNS:
                 break
-        key = key_for(model)
-        if not key:
-            return cleaned
         with self._lock:
-            if cleaned:
-                self._by_model[key] = cleaned
-            else:
-                self._by_model.pop(key, None)
+            self._turns = cleaned
         return cleaned
 
-    def clear(self, model: str | None = None) -> None:
+    def clear(self) -> None:
         with self._lock:
-            if model:
-                self._by_model.pop(key_for(model), None)
-            else:
-                self._by_model.clear()
+            self._turns = []

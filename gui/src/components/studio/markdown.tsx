@@ -1,6 +1,7 @@
 import { Fragment, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { highlightCode, normalizeLang } from "@/lib/chat/highlight";
+import { parseTableAt, type MdTable, type TableAlign } from "@/lib/chat/md-table";
 import { PYGMENTS_STYLES, SYNTAX_AUTO, useSyntaxPref } from "@/lib/chat/syntax";
 import { cn } from "@/lib/utils";
 
@@ -79,7 +80,16 @@ function renderProse(block: string, nodes: ReactNode[]) {
     list = [];
   };
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const table = parseTableAt(lines, i);
+    if (table) {
+      flushPara();
+      flushList();
+      nodes.push(<MarkdownTable key={`t${nodes.length}`} table={table.table} />);
+      i += table.consumed - 1;
+      continue;
+    }
+    const line = lines[i] ?? "";
     const bullet = line.match(/^\s*[-*]\s+(.*)$/);
     if (bullet) {
       flushPara();
@@ -96,6 +106,50 @@ function renderProse(block: string, nodes: ReactNode[]) {
   }
   flushList();
   flushPara();
+}
+
+function alignClass(align: TableAlign | undefined): string {
+  if (align === "center") return "text-center";
+  if (align === "right") return "text-right";
+  return "text-left";
+}
+
+function MarkdownTable({ table }: { table: MdTable }) {
+  return (
+    <div className="my-3 overflow-x-auto rounded-md outline outline-1 -outline-offset-1 outline-foreground/10">
+      <table className="w-full min-w-max border-collapse text-sm">
+        <thead>
+          <tr className="border-b border-border bg-secondary/70">
+            {table.headers.map((h, i) => (
+              <th
+                key={i}
+                className={cn(
+                  "px-3 py-1.5 text-xs font-medium tracking-wide text-foreground",
+                  alignClass(table.align[i]),
+                )}
+              >
+                {inline(h)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {table.rows.map((row, r) => (
+            <tr key={r} className="border-b border-border/50 last:border-0">
+              {row.map((cell, c) => (
+                <td
+                  key={c}
+                  className={cn("px-3 py-1.5 text-foreground/85", alignClass(table.align[c]))}
+                >
+                  {inline(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function CodeBlock({ lang, body, file }: { lang: string; body: string; file: string | null }) {

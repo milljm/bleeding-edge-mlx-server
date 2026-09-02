@@ -174,18 +174,12 @@ function ChatPlayground({ live }: { live: boolean }) {
   const stickRef = useRef(true);
   const programmaticRef = useRef(false);
   const readyRef = useRef(false);
-  const key = model ? publicName(model) : "";
   const remoteBusy = modelIsBusy(progressSnap, model);
   const stopping = busy || remoteBusy;
 
   useEffect(() => {
-    readyRef.current = false;
     let cancelled = false;
-    if (!key) {
-      setTurns([]);
-      return;
-    }
-    void getPlayground(key)
+    void getPlayground()
       .then((loaded) => {
         if (cancelled) return;
         setTurns(loaded);
@@ -197,15 +191,15 @@ function ChatPlayground({ live }: { live: boolean }) {
     return () => {
       cancelled = true;
     };
-  }, [key]);
+  }, []);
 
   useEffect(() => {
-    if (!readyRef.current || !key) return;
+    if (!readyRef.current) return;
     const handle = window.setTimeout(() => {
-      void putPlayground(key, turns);
+      void putPlayground(turns);
     }, 250);
     return () => window.clearTimeout(handle);
-  }, [turns, key]);
+  }, [turns]);
 
   function follow() {
     const el = scrollerRef.current;
@@ -268,12 +262,10 @@ function ChatPlayground({ live }: { live: boolean }) {
   async function reset() {
     if (stopping) await halt();
     setTurns([]);
-    if (key) {
-      try {
-        await clearPlayground(key);
-      } catch {
-        /* RAM miss is fine */
-      }
+    try {
+      await clearPlayground();
+    } catch {
+      /* RAM miss is fine */
     }
   }
 

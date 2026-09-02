@@ -235,7 +235,6 @@ class GatewayTests(unittest.TestCase):
             "PUT",
             "/v1/playground",
             {
-                "model": "MiniMax-M2.7-ConfigI-MLX",
                 "turns": [
                     {"role": "user", "text": "hi"},
                     {"role": "assistant", "text": "hello", "thinking": "plan"},
@@ -244,12 +243,20 @@ class GatewayTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(len(body.get("turns") or []), 2)
-        status, body = self._json("GET", "/v1/playground?model=minimax-m2.7-configi-mlx")
+        status, body = self._json("GET", "/v1/playground")
         self.assertEqual(status, 200)
         self.assertEqual(body["turns"][1]["thinking"], "plan")
-        status, body = self._json("DELETE", "/v1/playground?model=MiniMax-M2.7-ConfigI-MLX")
+        status, body = self._json(
+            "PUT",
+            "/v1/playground",
+            {"model": "ignored", "turns": [{"role": "user", "text": "still-shared"}]},
+        )
         self.assertEqual(status, 200)
-        status, body = self._json("GET", "/v1/playground?model=MiniMax-M2.7-ConfigI-MLX")
+        status, body = self._json("GET", "/v1/playground")
+        self.assertEqual(body["turns"][0]["text"], "still-shared")
+        status, body = self._json("DELETE", "/v1/playground")
+        self.assertEqual(status, 200)
+        status, body = self._json("GET", "/v1/playground")
         self.assertEqual(body.get("turns"), [])
 
     def test_chat_resolves_basename_case_insensitive(self):

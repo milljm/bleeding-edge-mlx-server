@@ -372,16 +372,8 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
 
             self._json(save_prefs(body))
 
-        def _playground_model(self, body: dict[str, Any] | None = None) -> str:
-            qs = parse_qs(urlparse(self.path).query)
-            name = (qs.get("model") or [""])[0].strip()
-            if not name and body:
-                name = str(body.get("model") or body.get("id") or "").strip()
-            return name
-
         def _playground_get(self) -> None:
-            model = self._playground_model()
-            self._json({"model": model, "turns": playground.get(model)})
+            self._json({"turns": playground.get()})
 
         def _playground_put(self) -> None:
             try:
@@ -389,28 +381,22 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             except ValueError as exc:
                 self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
                 return
-            model = self._playground_model(body)
-            if not model:
-                self._json({"error": {"message": "model is required", "type": "invalid_request_error"}}, 400)
-                return
             turns = body.get("turns")
             if not isinstance(turns, list):
                 self._json({"error": {"message": "turns must be a list", "type": "invalid_request_error"}}, 400)
                 return
-            saved = playground.put(model, turns)
-            self._json({"ok": True, "model": model, "turns": saved})
+            saved = playground.put(turns)
+            self._json({"ok": True, "turns": saved})
 
         def _playground_clear(self) -> None:
-            body: dict[str, Any] = {}
             if int(self.headers.get("Content-Length") or 0) > 0:
                 try:
-                    body = _read_json(self)
+                    _read_json(self)
                 except ValueError as exc:
                     self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
                     return
-            model = self._playground_model(body)
-            playground.clear(model or None)
-            self._json({"ok": True, "model": model})
+            playground.clear()
+            self._json({"ok": True})
 
         def _progress(self) -> None:
             qs = parse_qs(urlparse(self.path).query)
