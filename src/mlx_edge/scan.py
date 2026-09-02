@@ -75,6 +75,34 @@ EMBED_ARCH_MARKERS = (
     "xlmrobertamodel",
     "nomicbert",
 )
+TTS_NAME_MARKERS = (
+    "tts",
+    "kokoro",
+    "orpheus",
+    "chatterbox",
+    "pocket_tts",
+    "f5_tts",
+    "xtts",
+    "styletts",
+    "vibevoice",
+    "sesame",
+    "spark_tts",
+    "dia_",
+    "_dia",
+)
+STT_NAME_MARKERS = (
+    "whisper",
+    "parakeet",
+    "canary",
+    "moonshine",
+    "sensevoice",
+    "faster_whisper",
+    "speech_to_text",
+    "_stt",
+    "stt_",
+    "asr",
+)
+STT_TYPES = ("whisper", "parakeet", "canary", "moonshine")
 
 
 def scan_dirs(dirs: list[str]) -> dict[str, Any]:
@@ -288,6 +316,13 @@ def _infer_engine(cfg: dict[str, Any], repo: str, folder: str) -> str:
     model_type = str(cfg.get("model_type") or "").lower().replace("-", "_")
     if model_type in LM_MODEL_TYPES:
         return "lm"
+    # Omni VLMs (vision + audio_config) stay vlm. Dedicated speech checkpoints
+    # have no vision tower — kokoro / whisper / parakeet.
+    if not any(cfg.get(key) for key in ("vision_config", "image_config")):
+        if model_type in STT_TYPES or any(marker in blob for marker in STT_NAME_MARKERS):
+            return "stt"
+        if any(marker in blob for marker in TTS_NAME_MARKERS):
+            return "tts"
     if any(cfg.get(key) for key in ("vision_config", "image_config", "audio_config")):
         return "vlm"
     if any(marker in blob for marker in EMBED_ARCH_MARKERS):

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 PREFS_PATH = Path.home() / ".config" / "mlx-edge" / "studio.json"
-ENGINES = {"lm", "vlm", "embed"}
+ENGINES = {"lm", "vlm", "embed", "tts", "stt"}
 
 
 def empty_prefs() -> dict[str, Any]:

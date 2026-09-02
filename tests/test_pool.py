@@ -131,6 +131,19 @@ class PoolTests(unittest.TestCase):
         self.assertNotIn("--model", argv)
         self.assertEqual(argv[argv.index("--port") + 1], "9")
 
+    def test_tts_spawn_uses_tts_model_flag(self):
+        argv = spawn_argv("tts", "/models/Kokoro-82M", 9, ["--model", "nope"])
+        self.assertIn("mlx_vlm.server", argv)
+        self.assertIn("--tts-model", argv)
+        self.assertEqual(argv[argv.index("--tts-model") + 1], "/models/Kokoro-82M")
+        self.assertNotIn("--model", argv)
+
+    def test_stt_spawn_uses_stt_model_flag(self):
+        argv = spawn_argv("stt", "/models/whisper-tiny", 11, [])
+        self.assertIn("--stt-model", argv)
+        self.assertEqual(argv[argv.index("--stt-model") + 1], "/models/whisper-tiny")
+        self.assertNotIn("--model", argv)
+
     def test_embed_openai_owned_by(self):
         pool = self._pool()
         item = pool.load("embed", "/models/Qwen3-Embedding-0.6B")

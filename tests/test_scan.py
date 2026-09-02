@@ -62,6 +62,39 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(models["BAAI/bge-small-en-v1.5-mlx"]["engine"], "embed")
             self.assertEqual(models["mlx-community/Qwen3-8B-4bit"]["engine"], "lm")
 
+    def test_tts_and_stt_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tts = root / "mlx-community" / "Kokoro-82M"
+            tts.mkdir(parents=True)
+            (tts / "config.json").write_text(
+                json.dumps({"model_type": "kokoro", "architectures": ["KokoroModel"]}),
+                encoding="utf-8",
+            )
+            (tts / "model.safetensors").write_bytes(b"w")
+            stt = root / "mlx-community" / "whisper-tiny-mlx"
+            stt.mkdir(parents=True)
+            (stt / "config.json").write_text(
+                json.dumps({"model_type": "whisper", "architectures": ["WhisperForConditionalGeneration"]}),
+                encoding="utf-8",
+            )
+            (stt / "model.safetensors").write_bytes(b"w")
+            omni = root / "mlx-community" / "Qwen2-Audio-7B"
+            omni.mkdir(parents=True)
+            (omni / "config.json").write_text(
+                json.dumps({
+                    "model_type": "qwen2_audio",
+                    "audio_config": {"hidden_size": 16},
+                    "architectures": ["Qwen2AudioForConditionalGeneration"],
+                }),
+                encoding="utf-8",
+            )
+            (omni / "model.safetensors").write_bytes(b"w")
+            models = {m["repo"]: m for m in list_models(str(root))}
+            self.assertEqual(models["mlx-community/Kokoro-82M"]["engine"], "tts")
+            self.assertEqual(models["mlx-community/whisper-tiny-mlx"]["engine"], "stt")
+            self.assertEqual(models["mlx-community/Qwen2-Audio-7B"]["engine"], "vlm")
+
     def test_reads_context_window(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

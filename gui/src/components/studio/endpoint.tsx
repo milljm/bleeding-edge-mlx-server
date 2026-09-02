@@ -1,7 +1,7 @@
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { guiCommand, loadCommand } from "@/lib/command";
+import { guiCommand, loadCommand, engineLabel } from "@/lib/command";
 import { publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 
@@ -16,6 +16,8 @@ export function EndpointPanel() {
   const base = gateway.url;
   const id = publicName(model);
   const embed = model.engine === "embed";
+  const tts = model.engine === "tts";
+  const stt = model.engine === "stt";
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
@@ -34,7 +36,7 @@ export function EndpointPanel() {
         <ul className="space-y-1 text-sm text-ok">
           {served.map((m) => (
             <li key={m.repo}>
-              loaded {m.repo} · {m.engine === "vlm" ? "mlx-vlm" : m.engine === "embed" ? "mlx-embed" : "mlx-lm"}
+              loaded {m.repo} · {engineLabel(m.engine)}
             </li>
           ))}
         </ul>
@@ -49,6 +51,16 @@ export function EndpointPanel() {
         <CopyBlock
           label="curl embeddings"
           code={`curl ${base}/embeddings \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${id}","input":"what is the capital of France?"}'`}
+        />
+      ) : tts ? (
+        <CopyBlock
+          label="curl speech"
+          code={`curl ${base}/audio/speech \\\n  -H 'content-type: application/json' \\\n  -d '{"model":"${id}","input":"hello from Edge"}' \\\n  --output speech.mp3`}
+        />
+      ) : stt ? (
+        <CopyBlock
+          label="curl transcriptions"
+          code={`curl ${base}/audio/transcriptions \\\n  -F model=${id} \\\n  -F file=@audio.wav`}
         />
       ) : (
         <CopyBlock

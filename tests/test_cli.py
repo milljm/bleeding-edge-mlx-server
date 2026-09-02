@@ -64,10 +64,12 @@ class CliTests(unittest.TestCase):
 
     def test_serve_parses_preload_flags(self):
         parser = build_parser()
-        args = parser.parse_args(["serve", "--lm", "qwen", "--vlm", "qwen-vl", "--lm", "llama", "--embed", "bge"])
+        args = parser.parse_args(["serve", "--lm", "qwen", "--vlm", "qwen-vl", "--lm", "llama", "--embed", "bge", "--tts", "kokoro", "--stt", "whisper"])
         self.assertEqual(args.lm, ["qwen", "llama"])
         self.assertEqual(args.vlm, ["qwen-vl"])
         self.assertEqual(args.embed, ["bge"])
+        self.assertEqual(args.tts, ["kokoro"])
+        self.assertEqual(args.stt, ["whisper"])
 
     def test_legacy_engine_model(self):
         parser = build_parser()

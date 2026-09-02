@@ -38,6 +38,12 @@ basename (any case), `org/name`, or the path.
 - `POST /v1/embeddings` — OpenAI embeddings. Routed to a loaded `embed` engine
   (`mlx_vlm.server --embedding-model`). Body `model` is pinned to the spawn
   path. Does not touch chat children.
+- `POST /v1/audio/speech` — OpenAI TTS. Routed to a loaded `tts` engine
+  (`mlx_vlm.server --tts-model`). JSON `{model, input, voice?}`. Returns audio
+  bytes. Playground stays text-only.
+- `POST /v1/audio/transcriptions` — OpenAI STT. Routed to a loaded `stt` engine
+  (`mlx_vlm.server --stt-model`). Multipart `file` + `model` (JSON is also
+  accepted). Alias: `/v1/audio/translations`.
 - `GET /v1/progress` — Edge-specific JSON snapshot of prompt processing
   (prefill) and decode. Does not change the OpenAI surface. Top-level
   `progress` and `models[].progress` are always floats in `[0.0, 1.0]` (idle
@@ -56,7 +62,7 @@ basename (any case), `org/name`, or the path.
   `PUT {turns}`. `DELETE` / `POST /v1/playground/clear` empties it.
 - `POST /v1/completions` — routed by `model`
 - `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id).
-  `engine` is `lm` | `vlm` | `embed`. After the child is healthy, Edge sends a
+  `engine` is `lm` | `vlm` | `embed` | `tts` | `stt`. After the child is healthy, Edge sends a
   1-token warmup (or a tiny embed) so Metal graphs are compiled before the
   first real request. After that the child sits idle until a client hits it.
 - `POST /v1/unload` — unload `{model}`
@@ -145,9 +151,10 @@ use Harmony `<|channel|>` tokens instead.
 On Serve, if the folder has no template, Edge pulls one from Hugging Face
 and passes `--chat-template` to **mlx-lm.server**. mlx-vlm.server has no
 `--chat-template` / `--temp` / `--top-p` / `--prompt-cache-size` — sampling
-is on the request, thinking is `--enable-thinking`, and Advanced flags can
-preload extra image / speech / embed / reranker models onto that same child.
-Harmony is only injected as a fallback for gpt-oss / ConfigI names — not for
+is on the request, thinking is `--enable-thinking`. TTS, STT, and embed are
+their own Serve engines (scan tags kokoro / whisper / bge, or force Engine).
+Advanced VLM flags can still preload an extra image-gen or reranker onto a
+vision child. Harmony is only injected as a fallback for gpt-oss / ConfigI names — not for
 generic MiniMax-M2.7 / M3 (those would start in the wrong dialect and yield
 empty `content`). Settings → Chat template lets you paste Jinja or **Pull from
 Hugging Face**, then Reload.

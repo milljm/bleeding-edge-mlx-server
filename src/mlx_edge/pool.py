@@ -104,7 +104,7 @@ def server_argv(engine_id: str) -> list[str]:
     """Prefer `python -m mlx_lm server` — `python -m mlx_lm.server` is deprecated."""
     if engine_id == "lm":
         return [sys.executable, "-u", "-m", "mlx_lm", "server"]
-    if engine_id in {"vlm", "embed"}:
+    if engine_id in {"vlm", "embed", "tts", "stt"}:
         return [sys.executable, "-u", "-m", "mlx_vlm.server"]
     engine = get_engine(engine_id)
     if not engine.server_module:
@@ -112,23 +112,20 @@ def server_argv(engine_id: str) -> list[str]:
     return [sys.executable, "-u", "-m", engine.server_module]
 
 
+KIND_MODEL_FLAG = {
+    "embed": "--embedding-model",
+    "tts": "--tts-model",
+    "stt": "--stt-model",
+}
+
+
 def spawn_argv(engine_id: str, model: str, port: int, extra: list[str]) -> list[str]:
     extra = strip_bind_args(list(extra or []))
-    extra = strip_named_args(extra, {"--model", "--embedding-model"})
-    if engine_id == "embed":
-        return [
-            *server_argv("embed"),
-            "--embedding-model",
-            model,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            *extra,
-        ]
+    extra = strip_named_args(extra, {"--model", "--embedding-model", "--tts-model", "--stt-model"})
+    flag = KIND_MODEL_FLAG.get(engine_id, "--model")
     return [
         *server_argv(engine_id),
-        "--model",
+        flag,
         model,
         "--host",
         "127.0.0.1",
@@ -139,7 +136,13 @@ def spawn_argv(engine_id: str, model: str, port: int, extra: list[str]) -> list[
 
 
 def owned_by(engine: str) -> str:
-    return {"lm": "mlx-lm", "vlm": "mlx-vlm", "embed": "mlx-embed"}.get(engine, "mlx-lm")
+    return {
+        "lm": "mlx-lm",
+        "vlm": "mlx-vlm",
+        "embed": "mlx-embed",
+        "tts": "mlx-tts",
+        "stt": "mlx-stt",
+    }.get(engine, "mlx-lm")
 
 
 @dataclass
@@ -176,7 +179,13 @@ class LoadedModel:
             row["max_model_len"] = n
             row["max_context_length"] = n
             row["n_ctx"] = n
-        if self.engine != "embed":
+        if self.engine == "embed":
+            pass
+        elif self.engine == "tts":
+            row["capabilities"] = {"speech": True}
+        elif self.engine == "stt":
+            row["capabilities"] = {"transcription": True}
+        else:
             row["capabilities"] = {
                 "vision": self.engine == "vlm",
                 "function_calling": True,
@@ -185,7 +194,13 @@ class LoadedModel:
         return row
 
     def as_lmstudio(self) -> dict[str, object]:
-        kind = {"lm": "llm", "vlm": "vlm", "embed": "embeddings"}.get(self.engine, "llm")
+        kind = {
+            "lm": "llm",
+            "vlm": "vlm",
+            "embed": "embeddings",
+            "tts": "tts",
+            "stt": "stt",
+        }.get(self.engine, "llm")
         row: dict[str, object] = {
             "id": self.public_id,
             "object": "model",
@@ -200,7 +215,9 @@ class LoadedModel:
             row["loaded_context_length"] = n
         row["capabilities"] = {
             "vision": self.engine == "vlm",
-            "tool_use": self.engine != "embed",
+            "tool_use": self.engine in {"lm", "vlm"},
+            "speech": self.engine == "tts",
+            "transcription": self.engine == "stt",
         }
         return row
 
@@ -224,6 +241,11 @@ def warmup_engine(item: LoadedModel, timeout: float = 120.0) -> None:
     if item.engine == "embed":
         payload: dict[str, object] = {"model": item.model, "input": "ok"}
         path = "/v1/embeddings"
+    elif item.engine == "tts":
+        payload = {"model": item.model, "input": "ok"}
+        path = "/v1/audio/speech"
+    elif item.engine == "stt":
+        return
     else:
         payload = {
             "model": item.model,

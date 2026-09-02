@@ -36,6 +36,8 @@ export function serveCommand(model: ModelRec, flags: FlagValues, gateway: Gatewa
 export function engineLabel(engine: EngineKind) {
   if (engine === "vlm") return "mlx-vlm";
   if (engine === "embed") return "mlx-embed";
+  if (engine === "tts") return "mlx-tts";
+  if (engine === "stt") return "mlx-stt";
   return "mlx-lm";
 }
 

@@ -378,11 +378,15 @@ def cmd_serve(args: argparse.Namespace, rest: list[str]) -> int:
         preloads.append(("vlm", model))
     for model in getattr(args, "embed", None) or []:
         preloads.append(("embed", model))
+    for model in getattr(args, "tts", None) or []:
+        preloads.append(("tts", model))
+    for model in getattr(args, "stt", None) or []:
+        preloads.append(("stt", model))
     if args.engine and args.model:
         for model in args.model:
             preloads.append((args.engine, model))
     elif args.model and not args.engine:
-        print(red("--model requires --engine lm|vlm|embed (or pass --lm / --vlm / --embed)"), file=sys.stderr)
+        print(red("--model requires --engine lm|vlm|embed|tts|stt (or pass --lm / --vlm / --embed / --tts / --stt)"), file=sys.stderr)
         return 2
 
     pool = ModelPool()
@@ -633,11 +637,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_rollback.set_defaults(func=cmd_rollback)
 
     p_serve = sub.add_parser("serve", help="OpenAI /v1 gateway; hot-load models beside each other")
-    p_serve.add_argument("--engine", choices=("lm", "vlm", "embed"), help="used with --model (repeatable)")
+    p_serve.add_argument("--engine", choices=("lm", "vlm", "embed", "tts", "stt"), help="used with --model (repeatable)")
     p_serve.add_argument("--model", action="append", default=[], help="preload with --engine (repeatable)")
     p_serve.add_argument("--lm", action="append", default=[], metavar="MODEL", help="preload an mlx-lm model (repeatable)")
     p_serve.add_argument("--vlm", action="append", default=[], metavar="MODEL", help="preload an mlx-vlm model (repeatable)")
     p_serve.add_argument("--embed", action="append", default=[], metavar="MODEL", help="preload an embedding model (repeatable)")
+    p_serve.add_argument("--tts", action="append", default=[], metavar="MODEL", help="preload a TTS model (repeatable)")
+    p_serve.add_argument("--stt", action="append", default=[], metavar="MODEL", help="preload an STT model (repeatable)")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8080)
     p_serve.add_argument("--gui", action="store_true", help="serve the Edge GUI on the same host/port")
@@ -645,7 +651,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.set_defaults(func=None, _serve=True)
 
     p_load = sub.add_parser("load", help="hot-load a model onto a running gateway")
-    p_load.add_argument("--engine", required=True, choices=("lm", "vlm", "embed"))
+    p_load.add_argument("--engine", required=True, choices=("lm", "vlm", "embed", "tts", "stt"))
     p_load.add_argument("--model", required=True)
     p_load.add_argument("--host")
     p_load.add_argument("--port", type=int)
@@ -686,6 +692,8 @@ def gui_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lm", action="append", default=[], metavar="MODEL", help="preload an mlx-lm model")
     parser.add_argument("--vlm", action="append", default=[], metavar="MODEL", help="preload an mlx-vlm model")
     parser.add_argument("--embed", action="append", default=[], metavar="MODEL", help="preload an embedding model")
+    parser.add_argument("--tts", action="append", default=[], metavar="MODEL", help="preload a TTS model")
+    parser.add_argument("--stt", action="append", default=[], metavar="MODEL", help="preload an STT model")
     parser.add_argument("--no-browser", action="store_true")
     args, rest = parser.parse_known_args(argv)
     args.engine = None
