@@ -104,7 +104,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         payload = json.loads(buf.getvalue())
         ids = {row["id"] for row in payload}
-        self.assertEqual(ids, {"lm", "vlm", "mlx"})
+        self.assertEqual(ids, {"lm", "vlm", "audio", "mlx"})
 
     def test_update_refuses_compiled_mlx(self):
         args = mock.Mock(
@@ -147,6 +147,10 @@ class CliTests(unittest.TestCase):
         engine, spec = parse_build_spec("mlx-vlm#42")
         self.assertEqual(engine.id, "vlm")
         self.assertIn("refs/pull/42/head", spec)
+        engine, spec = parse_build_spec("mlx-audio#12")
+        self.assertEqual(engine.id, "audio")
+        self.assertIn("refs/pull/12/head", spec)
+        self.assertIn("mlx-audio", spec)
         engine, spec = parse_build_spec("42", "vlm")
         self.assertEqual(engine.id, "vlm")
         parser = build_parser()
@@ -163,6 +167,7 @@ class CliTests(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("https://github.com/ml-explore/mlx-lm/pulls", out)
         self.assertIn("https://github.com/Blaizzy/mlx-vlm/pulls", out)
+        self.assertIn("https://github.com/Blaizzy/mlx-audio/pulls", out)
 
 
 if __name__ == "__main__":

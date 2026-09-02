@@ -199,17 +199,19 @@ def pip_install_spec(spec: str, with_deps: bool) -> int:
 
 
 BUILD_EPILOG = """search for a possible engine update at:
-  mlx-lm   https://github.com/ml-explore/mlx-lm/pulls
-  mlx-vlm  https://github.com/Blaizzy/mlx-vlm/pulls
+  mlx-lm     https://github.com/ml-explore/mlx-lm/pulls
+  mlx-vlm    https://github.com/Blaizzy/mlx-vlm/pulls
+  mlx-audio  https://github.com/Blaizzy/mlx-audio/pulls
 
 examples:
   mlx-edge build git+https://github.com/ml-explore/mlx-lm.git@refs/pull/1398/head
   mlx-edge build 1398
   mlx-edge build mlx-vlm#42
+  mlx-edge build mlx-audio#12
 """
 
 _PR_SPEC = re.compile(
-    r"^(?:(?P<name>mlx-lm|mlx-vlm|mlx|lm|vlm)#)?(?P<pr>\d+)$",
+    r"^(?:(?P<name>mlx-lm|mlx-vlm|mlx-audio|mlx|lm|vlm|audio)#)?(?P<pr>\d+)$",
     re.I,
 )
 
@@ -228,7 +230,7 @@ def parse_build_spec(spec: str, engine_id: str | None = None) -> tuple[Engine, s
     match = _PR_SPEC.fullmatch(raw)
     if match:
         name = (match.group("name") or engine_id or "lm").lower()
-        aliases = {"mlx-lm": "lm", "mlx-vlm": "vlm"}
+        aliases = {"mlx-lm": "lm", "mlx-vlm": "vlm", "mlx-audio": "audio"}
         engine = get_engine(aliases.get(name, name))
         url = f"git+{engine.repo}@refs/pull/{match.group('pr')}/head"
         return engine, url
@@ -241,6 +243,8 @@ def _engine_from_url(url: str, engine_id: str | None) -> Engine:
     if engine_id:
         return get_engine(engine_id)
     lower = url.lower()
+    if "mlx-audio" in lower:
+        return get_engine("audio")
     if "mlx-vlm" in lower:
         return get_engine("vlm")
     if "mlx-lm" in lower or "mlx_lm" in lower:
@@ -624,7 +628,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         help="git+ URL, PR number (mlx-lm), or engine#PR (mlx-vlm#42)",
     )
-    p_build.add_argument("--engine", choices=("lm", "vlm", "mlx"), help="when spec is a bare PR number")
+    p_build.add_argument("--engine", choices=("lm", "vlm", "audio", "mlx"), help="when spec is a bare PR number")
     p_build.add_argument("--force", action="store_true", help="allow git-install of compiled mlx")
     p_build.add_argument(
         "--with-deps",

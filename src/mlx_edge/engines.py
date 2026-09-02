@@ -39,6 +39,16 @@ ENGINES: dict[str, Engine] = {
         compiled=False,
         server_module="mlx_vlm.server",
     ),
+    "audio": Engine(
+        id="audio",
+        dist="mlx-audio",
+        module="mlx_audio",
+        conda="mlx-audio",
+        repo="https://github.com/Blaizzy/mlx-audio.git",
+        owner_repo="Blaizzy/mlx-audio",
+        compiled=False,
+        server_module=None,
+    ),
     "mlx": Engine(
         id="mlx",
         dist="mlx",
@@ -51,12 +61,21 @@ ENGINES: dict[str, Engine] = {
     ),
 }
 
-PYTHON_ENGINES = ("lm", "vlm")
+PYTHON_ENGINES = ("lm", "vlm", "audio")
 
 
 def get_engine(name: str) -> Engine:
     key = name.lower()
-    aliases = {"mlx-lm": "lm", "mlx_lm": "lm", "mlx-vlm": "vlm", "mlx_vlm": "vlm"}
+    aliases = {
+        "mlx-lm": "lm",
+        "mlx_lm": "lm",
+        "mlx-vlm": "vlm",
+        "mlx_vlm": "vlm",
+        "mlx-audio": "audio",
+        "mlx_audio": "audio",
+        "tts": "audio",
+        "stt": "audio",
+    }
     key = aliases.get(key, key)
     if key not in ENGINES:
         known = ", ".join(ENGINES)

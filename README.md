@@ -25,8 +25,17 @@ uv pip install -r requirements.txt
 edge-gui
 ```
 
-`git` is in the conda create because `requirements.txt` pulls `mlx-lm` and
-`mlx-vlm` from git HEAD. `uv pip` targets the active conda env (`CONDA_PREFIX`).
+`git` is in the conda create because `requirements.txt` pulls `mlx-lm`,
+`mlx-vlm`, and `mlx-audio` from git HEAD. `uv pip` targets the active conda env
+(`CONDA_PREFIX`).
+
+That file also pins two extras mlx-vlm has not declared yet: `safetensors` and
+`torchvision` (GLM-5 Next's vision tower imports torchvision — it pulls torch
+Apple Silicon wheels, not a CUDA Stable Diffusion stack) and `mlx-audio`
+(`mlx_vlm.server --tts-model` / `--stt-model`). Overlay a PR with
+`mlx-edge build mlx-audio#N` the same way as mlx-vlm. TTS still needs an
+**MLX** checkpoint (`mlx-community/Kokoro-*`, `mlx-community/chatterbox-fp16`)
+— `ResembleAI/chatterbox` on the Hub is PyTorch and has no `config.json`.
 
 `edge-gui` starts the gateway **and** the studio on the same host/port, then
 opens a browser. The footer shows the OpenAI base URL:
