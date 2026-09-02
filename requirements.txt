@@ -8,12 +8,19 @@
 #   mlx-edge serve
 #
 # `mlx` is the compiled Metal wheel from PyPI (3.13 macOS arm64 wheels exist).
-# mlx-lm / mlx-vlm install from git HEAD so new architectures land without
-# waiting on a release. `-e .` is this repo's mlx-edge CLI.
+# mlx-lm / mlx-vlm / mlx-audio install from git HEAD so new architectures land
+# without waiting on a release. `-e .` is this repo's mlx-edge CLI.
+#
+# Extras mlx-vlm has not declared (and may not, until those PRs merge):
+#   safetensors / torchvision — GLM-5 Next vision tower imports torchvision
+#     (that pulls torch). Apple Silicon wheels, not the CUDA SD conda stack.
+#   mlx-audio — mlx_vlm.server --tts-model / --stt-model import this. Overlay
+#     with `mlx-edge build audio` the same way as mlx-vlm.
 
 safetensors>=0.4
-torchvision>=0.20 # GLM5Next requirement
+torchvision>=0.20
 mlx>=0.29.0
 mlx-lm @ git+https://github.com/ml-explore/mlx-lm.git
 mlx-vlm @ git+https://github.com/Blaizzy/mlx-vlm.git
+mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git
 -e .
