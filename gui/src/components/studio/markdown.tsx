@@ -1,0 +1,202 @@
+import { Fragment, useState, type ReactNode } from "react";
+import { Check, Copy } from "lucide-react";
+import { highlightCode, normalizeLang } from "@/lib/chat/highlight";
+import { PYGMENTS_STYLES, SYNTAX_AUTO, useSyntaxPref } from "@/lib/chat/syntax";
+import { cn } from "@/lib/utils";
+
+function parseFenceInfo(info: string): { lang: string; file: string | null } {
+  const raw = info.trim();
+  if (!raw) return { lang: "text", file: null };
+  const named = raw.match(/(?:filename|file|title|path)\s*[:=]\s*["']?([^\s"']+)/i);
+  const colon = raw.match(/^([A-Za-z0-9_+-]+)\s*:\s*(\S+)$/);
+  if (colon) return { lang: colon[1] ?? "text", file: colon[2] ?? null };
+  const parts = raw.split(/\s+/).filter(Boolean);
+  const first = parts[0] ?? "text";
+  if (named?.[1]) return { lang: first.includes("/") ? "text" : first, file: named[1] };
+  if (first.includes("/") || /\.\w+$/.test(first)) {
+    const ext = first.split(".").pop() ?? "text";
+    return { lang: ext, file: first };
+  }
+  return { lang: first, file: null };
+}
+
+function inline(text: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    const token = m[0];
+    if (token.startsWith("**")) {
+      parts.push(
+        <strong key={k++} className="font-medium text-foreground">
+          {token.slice(2, -2)}
+        </strong>,
+      );
+    } else if (token.startsWith("*")) {
+      parts.push(
+        <em key={k++} className="italic">
+          {token.slice(1, -1)}
+        </em>,
+      );
+    } else {
+      parts.push(
+        <code key={k++} className="rounded-xs bg-code px-1 py-0.5 font-mono text-xs text-code-fg">
+          {token.slice(1, -1)}
+        </code>,
+      );
+    }
+    last = m.index + token.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+function renderProse(block: string, nodes: ReactNode[]) {
+  const lines = block.split("\n");
+  let para: string[] = [];
+  let list: string[] = [];
+  const flushPara = () => {
+    if (!para.length) return;
+    nodes.push(
+      <p key={`p${nodes.length}`} className="my-2 whitespace-pre-wrap leading-relaxed">
+        {inline(para.join("\n"))}
+      </p>,
+    );
+    para = [];
+  };
+  const flushList = () => {
+    if (!list.length) return;
+    nodes.push(
+      <ul key={`l${nodes.length}`} className="my-2 list-disc space-y-1 pl-5">
+        {list.map((item, idx) => (
+          <li key={idx}>{inline(item)}</li>
+        ))}
+      </ul>,
+    );
+    list = [];
+  };
+
+  for (const line of lines) {
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    if (bullet) {
+      flushPara();
+      list.push(bullet[1] ?? "");
+      continue;
+    }
+    if (line.trim() === "") {
+      flushList();
+      flushPara();
+      continue;
+    }
+    flushList();
+    para.push(line);
+  }
+  flushList();
+  flushPara();
+}
+
+function CodeBlock({ lang, body, file }: { lang: string; body: string; file: string | null }) {
+  const name = normalizeLang(lang);
+  const [copied, setCopied] = useState(false);
+  const [syntax, setSyntax] = useSyntaxPref();
+  const label = file || (name && name !== "text" ? name : "code");
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(body);
+    } catch {
+      /* ignore */
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  }
+
+  return (
+    <div className="my-3 overflow-hidden rounded-md bg-code text-code-fg outline outline-1 -outline-offset-1 outline-foreground/10">
+      <div className="flex items-center justify-between gap-2 border-b border-border px-2 py-0.5">
+        <span className="min-w-0 truncate px-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+          {label}
+        </span>
+        <div className="flex items-center">
+          <select
+            aria-label="Syntax highlighting theme"
+            value={syntax}
+            onChange={(e) => setSyntax(e.target.value)}
+            className="mr-0.5 h-8 max-w-[8.5rem] cursor-pointer truncate rounded-sm bg-transparent px-1 font-mono text-[10px] text-muted-foreground outline-none hover:text-foreground"
+          >
+            <option value={SYNTAX_AUTO}>auto</option>
+            {PYGMENTS_STYLES.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.id}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            aria-label={copied ? "Copied" : "Copy code"}
+            className="inline-flex size-8 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onClick={() => void copy()}
+          >
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+          </button>
+        </div>
+      </div>
+      <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed">
+        <code dangerouslySetInnerHTML={{ __html: highlightCode(body, name) }} />
+      </pre>
+    </div>
+  );
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const OPEN_FENCE = /^( {0,3})(`{3,}|~{3,})([^\n]*)$/;
+
+export function Markdown({ text, className }: { text: string; className?: string }) {
+  const source = typeof text === "string" ? text : String(text ?? "");
+  const lines = source.split("\n");
+  const nodes: ReactNode[] = [];
+  let prose: string[] = [];
+  let i = 0;
+
+  const flushProse = () => {
+    if (!prose.length) return;
+    renderProse(prose.join("\n"), nodes);
+    prose = [];
+  };
+
+  while (i < lines.length) {
+    const open = lines[i].match(OPEN_FENCE);
+    if (open) {
+      flushProse();
+      const marker = open[2];
+      const meta = parseFenceInfo(open[3] ?? "");
+      const close = new RegExp(`^ {0,3}${escapeRe(marker)}[ \\t]*$`);
+      const body: string[] = [];
+      i += 1;
+      while (i < lines.length && !close.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      if (i < lines.length) i += 1;
+      nodes.push(
+        <CodeBlock key={`c${nodes.length}`} lang={meta.lang} file={meta.file} body={body.join("\n")} />,
+      );
+      continue;
+    }
+    prose.push(lines[i]);
+    i += 1;
+  }
+  flushProse();
+
+  return (
+    <div className={cn("text-pretty text-sm text-foreground/90", className)}>
+      {nodes.length ? nodes : <Fragment>{inline(source)}</Fragment>}
+    </div>
+  );
+}

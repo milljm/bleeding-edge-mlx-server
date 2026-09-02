@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { type UIEvent, useEffect, useRef, useState } from "react";
 import { ArrowUp, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Markdown } from "@/components/studio/markdown";
 import { deltaContent, deltaReasoning, getProgress, modelIsBusy, modelIsLive, postStop, type ModelProgress } from "@/lib/edge-api";
 import { loadTarget, publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
@@ -157,8 +158,32 @@ function ChatPlayground({ live }: { live: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<ModelProgress | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const stickRef = useRef(true);
+  const programmaticRef = useRef(false);
   const remoteBusy = modelIsBusy(progressSnap, model);
   const stopping = busy || remoteBusy;
+
+  function follow() {
+    const el = scrollerRef.current;
+    if (!el || !stickRef.current) return;
+    programmaticRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      programmaticRef.current = false;
+    });
+  }
+
+  function onScroll(ev: UIEvent<HTMLDivElement>) {
+    if (programmaticRef.current) return;
+    const el = ev.currentTarget;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickRef.current = gap < 72;
+  }
+
+  useEffect(() => {
+    follow();
+  }, [turns, stopping, progress]);
 
   useEffect(() => {
     if (!stopping || !model) {
@@ -197,6 +222,7 @@ function ChatPlayground({ live }: { live: boolean }) {
     if (!text || !model || !live || stopping) return;
     setInput("");
     setError(null);
+    stickRef.current = true;
     const next = [...turns, { role: "user" as const, text }];
     setTurns(next);
     setBusy(true);
@@ -289,7 +315,11 @@ function ChatPlayground({ live }: { live: boolean }) {
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+      <div
+        ref={scrollerRef}
+        onScroll={onScroll}
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1"
+      >
         {turns.length === 0 ? (
           <p className="pt-6 text-sm text-muted-foreground">
             Streaming POST /v1/chat/completions on the already-loaded engine. {served.length} loaded on this origin.
@@ -299,10 +329,10 @@ function ChatPlayground({ live }: { live: boolean }) {
             <article
               key={`${turn.role}-${i}`}
               className={cn(
-                "max-w-[85%] rounded-2xl px-4 py-3 text-sm",
+                "rounded-2xl px-4 py-3 text-sm",
                 turn.role === "user"
-                  ? "ml-auto bg-secondary text-foreground"
-                  : "mr-auto bg-card shadow-[var(--shadow-border)]",
+                  ? "ml-auto max-w-[85%] bg-secondary text-foreground"
+                  : "mr-auto w-full max-w-full bg-card shadow-[var(--shadow-border)]",
               )}
             >
               <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
@@ -322,12 +352,12 @@ function ChatPlayground({ live }: { live: boolean }) {
                     </p>
                   ) : null}
                   {turn.text ? (
-                    <p className="leading-relaxed whitespace-pre-wrap">
-                      {turn.text}
+                    <div className="leading-relaxed">
+                      <Markdown text={turn.text} />
                       {stopping && i === turns.length - 1 && turn.role === "assistant" ? (
                         <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
                       ) : null}
-                    </p>
+                    </div>
                   ) : stopping && i === turns.length - 1 && turn.role === "assistant" ? (
                     <span className="inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
                   ) : null}
