@@ -52,7 +52,7 @@ STATIC_TYPES = {
 }
 
 # GUI progress/log polls drown the log. Real POST /v1/chat stays visible.
-_QUIET_ACCESS = re.compile(r"\b(?:GET|HEAD) /v1/(?:progress|logs)(?:/|\?|\s)", re.I)
+_QUIET_ACCESS = re.compile(r"\b(?:GET|HEAD) /v1/(?:progress|logs|hub/progress)(?:/|\?|\s)", re.I)
 
 
 def _quiet_access(line: str) -> bool:
@@ -282,6 +282,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/hub"}:
                 self._hub_status()
                 return
+            if path in {"/v1/hub/progress"}:
+                self._hub_progress()
+                return
             if self._static(raw_path):
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
@@ -319,6 +322,15 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                 return
             if path in {"/v1/hub/download"}:
                 self._hub_download()
+                return
+            if path in {"/v1/hub/pause"}:
+                self._hub_pause()
+                return
+            if path in {"/v1/hub/resume"}:
+                self._hub_resume()
+                return
+            if path in {"/v1/hub/cancel"}:
+                self._hub_cancel()
                 return
             if path in {"/v1/prefs", "/v1/studio"}:
                 self._prefs_save()
@@ -367,39 +379,69 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
 
         def _hub_status(self) -> None:
-            from mlx_edge.hub import token_set
+            from mlx_edge.hub import TOKEN_HELP, token_set
 
-            self._json({"token": token_set()})
+            self._json({"token": token_set(), "help": TOKEN_HELP})
+
+        def _hub_progress(self) -> None:
+            from mlx_edge.hub import download_progress
+
+            self._json(download_progress())
 
         def _hub_search(self) -> None:
+            from mlx_edge.hub import TOKEN_HELP, search_quants, token_set
+
+            if not token_set():
+                self._json({"error": {"message": TOKEN_HELP, "type": "invalid_request_error"}}, 403)
+                return
             try:
                 body = _read_json(self)
             except ValueError as exc:
                 self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
                 return
             query = str(body.get("query") or body.get("url") or body.get("repo") or "").strip()
-            from mlx_edge.hub import search_quants
-
             try:
                 self._json(search_quants(query))
-            except ValueError as exc:
-                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+            except PermissionError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 403)
+            except ValueError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 400)
 
         def _hub_download(self) -> None:
+            from mlx_edge.hub import TOKEN_HELP, start_download, token_set
+
+            if not token_set():
+                self._json({"error": {"message": TOKEN_HELP, "type": "invalid_request_error"}}, 403)
+                return
             try:
                 body = _read_json(self)
-            except ValueError as exc:
-                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
+            except ValueError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 400)
                 return
             repo = str(body.get("repo") or body.get("query") or "").strip()
-            from mlx_edge.hub import download_repo
-
             try:
-                self._json(download_repo(repo, logs=pool.logs))
-            except ValueError as exc:
-                self._json({"error": {"message": str(exc), "type": "invalid_request_error"}}, 400)
-            except Exception as exc:  # noqa: BLE001
-                self._json({"error": {"message": str(exc), "type": "server_error"}}, 500)
+                self._json(start_download(repo, logs=pool.logs))
+            except PermissionError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 403)
+            except ValueError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 400)
+            except Exception as extra:  # noqa: BLE001
+                self._json({"error": {"message": str(extra), "type": "server_error"}}, 500)
+
+        def _hub_pause(self) -> None:
+            from mlx_edge.hub import pause_download
+
+            self._json(pause_download())
+
+        def _hub_resume(self) -> None:
+            from mlx_edge.hub import resume_download
+
+            self._json(resume_download())
+
+        def _hub_cancel(self) -> None:
+            from mlx_edge.hub import cancel_download
+
+            self._json(cancel_download())
 
         def _load(self) -> None:
             try:
