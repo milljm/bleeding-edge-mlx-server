@@ -181,6 +181,58 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(rec["path"], str(snap))
             self.assertEqual(rec["engine"], "lm")
 
+    def test_hub_snapshot_symlinks_and_pth(self):
+        """HF hub stores snapshot files as symlinks into blobs/. Kokoro is .pth."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--hexgrad--Kokoro-82M"
+            snap = hub / "snapshots" / "deadbeef"
+            blob = hub / "blobs" / "aaa"
+            snap.mkdir(parents=True)
+            blob.parent.mkdir(parents=True)
+            blob.write_bytes(b"w" * 64)
+            (snap / "config.json").write_text(json.dumps({"model_type": "kokoro"}), encoding="utf-8")
+            (snap / "kokoro-v1_0.pth").symlink_to(blob)
+            (hub / "refs").mkdir()
+            (hub / "refs" / "main").write_text("deadbeef", encoding="utf-8")
+            models = {m["repo"]: m for m in list_models(str(root))}
+            self.assertIn("hexgrad/Kokoro-82M", models)
+            self.assertEqual(models["hexgrad/Kokoro-82M"]["engine"], "tts")
+            self.assertEqual(models["hexgrad/Kokoro-82M"]["path"], str(snap))
+            self.assertNotEqual(models["hexgrad/Kokoro-82M"]["size"], "—")
+
+    def test_hub_diffusers_model_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--stable-diffusion-v1-5--stable-diffusion-v1-5"
+            snap = hub / "snapshots" / "abc"
+            unet = snap / "unet"
+            unet.mkdir(parents=True)
+            (snap / "model_index.json").write_text(
+                json.dumps({"_class_name": "StableDiffusionPipeline"}),
+                encoding="utf-8",
+            )
+            (unet / "diffusion_pytorch_model.safetensors").write_bytes(b"w" * 32)
+            (hub / "blobs").mkdir()
+            (hub / "refs").mkdir()
+            models = list_models(str(root))
+            self.assertEqual(len(models), 1)
+            self.assertEqual(models[0]["repo"], "stable-diffusion-v1-5/stable-diffusion-v1-5")
+            self.assertEqual(models[0]["engine"], "image")
+            self.assertEqual(models[0]["path"], str(snap))
+
+    def test_hub_blobs_dir_is_not_a_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--openai--clip-vit-large-patch14"
+            blobs = hub / "blobs"
+            blobs.mkdir(parents=True)
+            (blobs / "config.json").write_text("{}", encoding="utf-8")
+            (blobs / "model.safetensors").write_bytes(b"w")
+            (hub / "refs").mkdir()
+            models = list_models(str(root))
+            self.assertEqual(models, [])
+
     def test_hub_skips_datasets_and_spaces(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

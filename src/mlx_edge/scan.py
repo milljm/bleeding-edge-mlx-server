@@ -23,12 +23,15 @@ SKIP_DIRS = {
     "tmp",
     ".mplx",
 }
-WEIGHT_SUFFIXES = {".safetensors", ".npz", ".gguf", ".mlx"}
+WEIGHT_SUFFIXES = {".safetensors", ".npz", ".gguf", ".mlx", ".bin", ".pt", ".pth", ".ckpt", ".onnx"}
 INDEX_NAMES = {
     "model.safetensors.index.json",
     "model.npz.index.json",
     "weights.safetensors.index.json",
 }
+CONFIG_NAMES = ("config.json", "model_index.json")
+# Hugging Face hub internals — never a model even if a stray weight landed there.
+HUB_INTERNALS = {"blobs", "refs", "snapshots"}
 # Text-only on mlx-lm even when the type name looks VL. MiniMax-M3
 # (`minimax_m3_vl`) ships a vision tower mlx-lm ignores; the working loader is
 # patched mlx-lm (`mlx-edge build`), not mlx-vlm.
@@ -187,7 +190,7 @@ def _walk(root: Path, current: Path, typed_dir: str, depth: int, found: list[dic
     for child in children:
         if len(found) >= MAX_MODELS:
             return
-        if not child.is_dir() or child.is_symlink():
+        if not child.is_dir():
             continue
         if child.name in SKIP_DIRS or child.name.startswith("."):
             continue
@@ -206,6 +209,7 @@ def _hub_snapshot(path: Path) -> Path | None:
         return None
     if not (path.name.startswith("models--") or (path / "refs").is_dir() or (path / "blobs").is_dir()):
         return None
+    ordered: list[Path] = []
     ref = path / "refs" / "main"
     if ref.is_file():
         try:
@@ -215,14 +219,19 @@ def _hub_snapshot(path: Path) -> Path | None:
         if sha:
             cand = snaps / sha
             if cand.is_dir():
-                return cand
+                ordered.append(cand)
     try:
-        children = [p for p in snaps.iterdir() if p.is_dir() and not p.is_symlink()]
+        others = [p for p in snaps.iterdir() if p.is_dir()]
     except OSError:
-        return None
-    if not children:
-        return None
-    return max(children, key=lambda p: p.stat().st_mtime)
+        others = []
+    others.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for cand in others:
+        if cand not in ordered:
+            ordered.append(cand)
+    for cand in ordered:
+        if _is_model_dir(cand):
+            return cand
+    return ordered[0] if ordered else None
 
 
 def _describe(
@@ -233,9 +242,9 @@ def _describe(
 ) -> dict[str, Any] | None:
     if not _is_model_dir(path):
         return None
-    cfg = _read_config(path / "config.json")
+    cfg = _read_model_config(path)
     repo = _infer_repo(path, root, hub_dir)
-    engine = _infer_engine(cfg, repo, path.name)
+    engine = _infer_engine(cfg, repo, path.name if hub_dir is None else repo)
     quant = _infer_quant(cfg, path, repo)
     size = _weight_size(path)
     return {
@@ -266,22 +275,40 @@ def _has_chat_template(path: Path) -> bool:
 
 
 def _is_model_dir(path: Path) -> bool:
-    cfg = path / "config.json"
-    if not cfg.is_file():
+    if path.name in HUB_INTERNALS:
+        return False
+    has_cfg = any((path / name).is_file() for name in CONFIG_NAMES)
+    if not has_cfg and not _is_hub_snapshot(path):
         return False
     return _has_weights(path)
 
 
-def _has_weights(path: Path) -> bool:
+def _is_hub_snapshot(path: Path) -> bool:
+    parent = path.parent
+    return parent.name == "snapshots" and parent.parent.name.startswith("models--")
+
+
+def _has_weights(path: Path, depth: int = 0) -> bool:
     try:
         for child in path.iterdir():
-            if child.name in INDEX_NAMES:
+            if child.name in HUB_INTERNALS or child.name.startswith("."):
+                continue
+            if child.name in INDEX_NAMES or child.suffix.lower() in WEIGHT_SUFFIXES:
                 return True
-            if child.suffix.lower() in WEIGHT_SUFFIXES:
-                return True
+            if depth < 2 and child.is_dir():
+                if _has_weights(child, depth + 1):
+                    return True
     except OSError:
         return False
     return False
+
+
+def _read_model_config(path: Path) -> dict[str, Any]:
+    for name in CONFIG_NAMES:
+        cfg = _read_config(path / name)
+        if cfg:
+            return cfg
+    return {}
 
 
 def _read_config(path: Path) -> dict[str, Any]:
@@ -432,16 +459,21 @@ def _pretty_name(raw: str) -> str:
     return name or raw
 
 
-def _weight_size(path: Path) -> int:
+def _weight_size(path: Path, depth: int = 0) -> int:
     total = 0
     try:
         for child in path.iterdir():
-            if child.suffix.lower() not in WEIGHT_SUFFIXES:
+            if child.name in HUB_INTERNALS or child.name.startswith("."):
                 continue
-            try:
-                total += child.stat().st_size
-            except OSError:
+            suffix = child.suffix.lower()
+            if suffix in WEIGHT_SUFFIXES or child.name in INDEX_NAMES:
+                try:
+                    total += child.stat().st_size
+                except OSError:
+                    continue
                 continue
+            if depth < 2 and child.is_dir():
+                total += _weight_size(child, depth + 1)
     except OSError:
         return 0
     return total
