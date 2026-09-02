@@ -295,7 +295,14 @@ def warmup_engine(item: LoadedModel, timeout: float = 120.0) -> None:
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             resp.read()
-    except (urllib.error.URLError, TimeoutError, OSError, urllib.error.HTTPError):
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", "replace")[:400]
+        except (OSError, AttributeError, ValueError, TypeError):
+            body = str(exc.reason) if getattr(exc, "reason", None) else str(exc)
+        raise RuntimeError(f"warmup HTTP {exc.code}: {body}".rstrip()) from exc
+    except (urllib.error.URLError, TimeoutError, OSError):
         return
 
 
@@ -392,7 +399,12 @@ class ModelPool:
             raise RuntimeError(annotate_load_error(f"{label} failed to start: {exc}")) from exc
         self.progress.end_load(item.public_id)
         if proc is not None:
-            warmup_engine(item)
+            try:
+                warmup_engine(item)
+            except Exception as exc:
+                self._kill(item)
+                self.progress.drop(item.public_id)
+                raise RuntimeError(annotate_load_error(f"{item.public_id} failed warmup: {exc}")) from exc
         self._models[item.id] = item
         return item
 

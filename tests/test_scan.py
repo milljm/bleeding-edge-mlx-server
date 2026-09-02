@@ -45,6 +45,18 @@ class ScanTests(unittest.TestCase):
             self.assertTrue(repos["mlx-community/Qwen3-8B-4bit"]["path"].endswith("Qwen3-8B-4bit"))
             self.assertEqual(repos["mlx-community/Qwen3-8B-4bit"]["id"], "lm-mlx-community-qwen3-8b-4bit")
 
+    def test_skips_1bit_quant(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_model(root / "someone" / "Bonsai-4B-mlx-1bit", bits=1)
+            _write_model(root / "someone" / "Qwen3-0.6B-4bit", bits=4)
+            named = root / "someone" / "toy-1bit"
+            named.mkdir(parents=True)
+            (named / "config.json").write_text(json.dumps({"model_type": "qwen3"}), encoding="utf-8")
+            (named / "model.safetensors").write_bytes(b"w" * 64)
+            repos = {m["repo"] for m in list_models(str(root))}
+            self.assertEqual(repos, {"someone/Qwen3-0.6B-4bit"})
+
     def test_embedding_models(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

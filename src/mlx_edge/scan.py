@@ -261,6 +261,8 @@ def _describe(
     repo = _infer_repo(path, root, hub_dir)
     engine = _infer_engine(cfg, repo, path.name if hub_dir is None else repo)
     quant = _infer_quant(cfg, path, repo)
+    if _unsupported_quant(cfg, path, repo):
+        return None
     size = _weight_size(path)
     return {
         "id": slug_model_id(engine, repo),
@@ -460,15 +462,10 @@ def context_window(model: str | Path) -> int | None:
 
 
 def _infer_quant(cfg: dict[str, Any], path: Path, repo: str) -> str:
-    quant = cfg.get("quantization") or cfg.get("quantization_config") or {}
-    if isinstance(quant, dict):
-        bits = quant.get("bits") or quant.get("n_bits")
-        if bits:
-            return f"{bits}-bit"
+    bits = _quant_bit_count(cfg, path, repo)
+    if bits is not None:
+        return f"{bits}-bit"
     blob = f"{path.name} {repo}"
-    match = re.search(r"(?i)(?:^|[-_])(\d)\s*-?bit(?:$|[-_])", blob)
-    if match:
-        return f"{match.group(1)}-bit"
     for token, label in (
         ("mxfp4", "MXFP4"),
         ("bf16", "BF16"),
@@ -484,6 +481,31 @@ def _infer_quant(cfg: dict[str, Any], path: Path, repo: str) -> str:
         if token in blob.lower():
             return label
     return "—"
+
+
+# mlx.nn.quantize: 2, 3, 4, 5, 6, 8. 1-bit (Bonsai-4B-mlx-1bit) crashes Serve.
+MLX_QUANT_BITS = {2, 3, 4, 5, 6, 8}
+
+
+def _quant_bit_count(cfg: dict[str, Any], path: Path, repo: str) -> int | None:
+    quant = cfg.get("quantization") or cfg.get("quantization_config") or {}
+    if isinstance(quant, dict):
+        raw = quant.get("bits") or quant.get("n_bits")
+        if raw is not None:
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                pass
+    blob = f"{path.name} {repo}"
+    match = re.search(r"(?i)(?:^|[-_/])(\d+)\s*-?bit(?:$|[-_])", blob)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _unsupported_quant(cfg: dict[str, Any], path: Path, repo: str) -> bool:
+    bits = _quant_bit_count(cfg, path, repo)
+    return bits is not None and bits not in MLX_QUANT_BITS
 
 
 def _pretty_name(raw: str) -> str:
