@@ -1,4 +1,4 @@
-export type EngineKind = "lm" | "vlm" | "embed" | "tts" | "stt";
+export type EngineKind = "lm" | "vlm" | "embed" | "tts" | "stt" | "rerank" | "image";
 export type FlagType = "number" | "text" | "bool" | "select";
 export type FlagGroup = "server" | "sampling" | "thinking" | "template";
 
@@ -174,7 +174,7 @@ export const FLAG_DEFS: FlagDef[] = [
     label: "Trust remote code",
     help: "Allow custom tokenizer / model code from Hub.",
     type: "bool",
-    engines: ["lm", "vlm", "embed", "tts", "stt"],
+    engines: ["lm", "vlm", "embed", "tts", "stt", "rerank", "image"],
     advanced: true,
     default: false,
   },
@@ -184,7 +184,7 @@ export const FLAG_DEFS: FlagDef[] = [
     label: "Log level",
     help: "Server logging verbosity.",
     type: "select",
-    engines: ["lm", "vlm", "embed", "tts", "stt"],
+    engines: ["lm", "vlm", "embed", "tts", "stt", "rerank", "image"],
     advanced: true,
     options: [
       { value: "DEBUG", label: "DEBUG" },
@@ -316,26 +316,6 @@ export const FLAG_DEFS: FlagDef[] = [
     advanced: true,
     default: "",
   },
-  {
-    key: "imageModel",
-    flag: "--image-model",
-    label: "Image model",
-    help: "Preload an extra image-generation model on this same mlx-vlm.server (not the vision tower of the VLM you Served).",
-    type: "text",
-    engines: ["vlm"],
-    advanced: true,
-    default: "",
-  },
-  {
-    key: "rerankerModel",
-    flag: "--reranker-model",
-    label: "Reranker model",
-    help: "Preload an extra reranker on this same mlx-vlm.server.",
-    type: "text",
-    engines: ["vlm"],
-    advanced: true,
-    default: "",
-  },
 ];
 
 export type FlagValues = Record<string, string | number | boolean>;
@@ -406,6 +386,8 @@ export function ownedBy(engine: EngineKind) {
   if (engine === "embed") return "mlx-embed";
   if (engine === "tts") return "mlx-tts";
   if (engine === "stt") return "mlx-stt";
+  if (engine === "rerank") return "mlx-rerank";
+  if (engine === "image") return "mlx-image";
   return "mlx-lm";
 }
 
@@ -414,5 +396,7 @@ export function engineFromOwnedBy(value?: string | null): EngineKind {
   if (value === "mlx-embed") return "embed";
   if (value === "mlx-tts") return "tts";
   if (value === "mlx-stt") return "stt";
+  if (value === "mlx-rerank") return "rerank";
+  if (value === "mlx-image") return "image";
   return "lm";
 }

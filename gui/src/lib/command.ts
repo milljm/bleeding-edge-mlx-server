@@ -38,6 +38,8 @@ export function engineLabel(engine: EngineKind) {
   if (engine === "embed") return "mlx-embed";
   if (engine === "tts") return "mlx-tts";
   if (engine === "stt") return "mlx-stt";
+  if (engine === "rerank") return "mlx-rerank";
+  if (engine === "image") return "mlx-image";
   return "mlx-lm";
 }
 

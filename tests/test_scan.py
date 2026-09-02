@@ -95,6 +95,47 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(models["mlx-community/whisper-tiny-mlx"]["engine"], "stt")
             self.assertEqual(models["mlx-community/Qwen2-Audio-7B"]["engine"], "vlm")
 
+    def test_rerank_and_image_detection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rerank = root / "mlx-community" / "Qwen3-Reranker-0.6B-4bit"
+            rerank.mkdir(parents=True)
+            (rerank / "config.json").write_text(
+                json.dumps({"model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"]}),
+                encoding="utf-8",
+            )
+            (rerank / "model.safetensors").write_bytes(b"w")
+            bge = root / "BAAI" / "bge-reranker-v2-m3-mlx"
+            bge.mkdir(parents=True)
+            (bge / "config.json").write_text(
+                json.dumps({"model_type": "xlm-roberta", "architectures": ["XLMRobertaModel"]}),
+                encoding="utf-8",
+            )
+            (bge / "model.safetensors").write_bytes(b"w")
+            flux = root / "mlx-community" / "FLUX.1-schnell-4bit"
+            flux.mkdir(parents=True)
+            (flux / "config.json").write_text(
+                json.dumps({"model_type": "flux", "architectures": ["FluxTransformer2DModel"]}),
+                encoding="utf-8",
+            )
+            (flux / "model.safetensors").write_bytes(b"w")
+            vlm = root / "mlx-community" / "Qwen2.5-VL-7B-Instruct-4bit"
+            vlm.mkdir(parents=True)
+            (vlm / "config.json").write_text(
+                json.dumps({
+                    "model_type": "qwen2_vl",
+                    "vision_config": {"hidden_size": 16},
+                    "architectures": ["Qwen2VLForConditionalGeneration"],
+                }),
+                encoding="utf-8",
+            )
+            (vlm / "model.safetensors").write_bytes(b"w")
+            models = {m["repo"]: m for m in list_models(str(root))}
+            self.assertEqual(models["mlx-community/Qwen3-Reranker-0.6B-4bit"]["engine"], "rerank")
+            self.assertEqual(models["BAAI/bge-reranker-v2-m3-mlx"]["engine"], "rerank")
+            self.assertEqual(models["mlx-community/FLUX.1-schnell-4bit"]["engine"], "image")
+            self.assertEqual(models["mlx-community/Qwen2.5-VL-7B-Instruct-4bit"]["engine"], "vlm")
+
     def test_reads_context_window(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

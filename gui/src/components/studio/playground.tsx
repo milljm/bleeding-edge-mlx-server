@@ -32,7 +32,7 @@ export function Playground() {
   if (model?.engine === "embed") {
     return <EmbedPlayground live={live} loadedCount={served.length} />;
   }
-  if (model?.engine === "tts" || model?.engine === "stt") {
+  if (model?.engine === "tts" || model?.engine === "stt" || model?.engine === "rerank" || model?.engine === "image") {
     return <AudioHint engine={model.engine} live={live} />;
   }
 
@@ -164,7 +164,14 @@ function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: nu
 }
 
 function AudioHint({ engine, live }: { engine: EngineKind; live: boolean }) {
-  const route = engine === "tts" ? "/v1/audio/speech" : "/v1/audio/transcriptions";
+  const route =
+    engine === "tts"
+      ? "/v1/audio/speech"
+      : engine === "stt"
+        ? "/v1/audio/transcriptions"
+        : engine === "rerank"
+          ? "/v1/rerank"
+          : "/v1/images/generations";
   return (
     <div className="flex flex-1 flex-col items-start justify-center">
       <p className="max-w-md text-sm text-muted-foreground">

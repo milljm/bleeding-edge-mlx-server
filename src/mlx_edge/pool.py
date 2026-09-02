@@ -104,7 +104,7 @@ def server_argv(engine_id: str) -> list[str]:
     """Prefer `python -m mlx_lm server` — `python -m mlx_lm.server` is deprecated."""
     if engine_id == "lm":
         return [sys.executable, "-u", "-m", "mlx_lm", "server"]
-    if engine_id in {"vlm", "embed", "tts", "stt"}:
+    if engine_id in {"vlm", "embed", "tts", "stt", "rerank", "image"}:
         return [sys.executable, "-u", "-m", "mlx_vlm.server"]
     engine = get_engine(engine_id)
     if not engine.server_module:
@@ -116,12 +116,14 @@ KIND_MODEL_FLAG = {
     "embed": "--embedding-model",
     "tts": "--tts-model",
     "stt": "--stt-model",
+    "rerank": "--reranker-model",
+    "image": "--image-model",
 }
 
 
 def spawn_argv(engine_id: str, model: str, port: int, extra: list[str]) -> list[str]:
     extra = strip_bind_args(list(extra or []))
-    extra = strip_named_args(extra, {"--model", "--embedding-model", "--tts-model", "--stt-model"})
+    extra = strip_named_args(extra, {"--model", *KIND_MODEL_FLAG.values()})
     flag = KIND_MODEL_FLAG.get(engine_id, "--model")
     return [
         *server_argv(engine_id),
@@ -142,6 +144,8 @@ def owned_by(engine: str) -> str:
         "embed": "mlx-embed",
         "tts": "mlx-tts",
         "stt": "mlx-stt",
+        "rerank": "mlx-rerank",
+        "image": "mlx-image",
     }.get(engine, "mlx-lm")
 
 
@@ -185,6 +189,10 @@ class LoadedModel:
             row["capabilities"] = {"speech": True}
         elif self.engine == "stt":
             row["capabilities"] = {"transcription": True}
+        elif self.engine == "rerank":
+            row["capabilities"] = {"rerank": True}
+        elif self.engine == "image":
+            row["capabilities"] = {"image_generation": True}
         else:
             row["capabilities"] = {
                 "vision": self.engine == "vlm",
@@ -200,6 +208,8 @@ class LoadedModel:
             "embed": "embeddings",
             "tts": "tts",
             "stt": "stt",
+            "rerank": "rerank",
+            "image": "image",
         }.get(self.engine, "llm")
         row: dict[str, object] = {
             "id": self.public_id,
@@ -218,6 +228,8 @@ class LoadedModel:
             "tool_use": self.engine in {"lm", "vlm"},
             "speech": self.engine == "tts",
             "transcription": self.engine == "stt",
+            "rerank": self.engine == "rerank",
+            "image_generation": self.engine == "image",
         }
         return row
 
@@ -244,7 +256,10 @@ def warmup_engine(item: LoadedModel, timeout: float = 120.0) -> None:
     elif item.engine == "tts":
         payload = {"model": item.model, "input": "ok"}
         path = "/v1/audio/speech"
-    elif item.engine == "stt":
+    elif item.engine == "rerank":
+        payload = {"model": item.model, "query": "ok", "documents": ["ok"]}
+        path = "/v1/rerank"
+    elif item.engine in {"stt", "image"}:
         return
     else:
         payload = {
