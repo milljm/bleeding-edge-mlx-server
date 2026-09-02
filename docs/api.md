@@ -92,7 +92,9 @@ basename (any case), `org/name`, or the path.
   `POST /v1/hub/search` `{query}` lists MLX quants. `POST /v1/hub/download`
   `{repo}` starts `snapshot_download` in a child process (poll `GET /v1/hub/progress`
   for byte-level ratio + `detail`). Pause is SIGSTOP. Resume is SIGCONT.
-  `POST /v1/hub/pause` / `resume` / `cancel`. Incomplete hub snapshots stay
+  `POST /v1/hub/pause` / `resume` / `cancel`. `POST /v1/hub/delete` `{repo}`
+  removes a `models--*` folder under the Hugging Face cache only (not LM Studio
+  or Ollama). Incomplete hub snapshots stay
   off the model list until the job finishes.
 - `GET /health` — `{status, models, host, port, bind, url}`
 

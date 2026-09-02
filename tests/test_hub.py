@@ -9,10 +9,12 @@ from unittest import mock
 
 from mlx_edge.hub import (
     JOB,
+    delete_hub_repo,
     download_repo,
     hub_downloaded_bytes,
     human_bytes,
     parse_repo,
+    resolve_hub_delete_target,
     search_quants,
     search_stem,
     start_download,
@@ -195,6 +197,24 @@ class HubTests(unittest.TestCase):
             (hub / "incomplete" / "tmp").unlink()
             models = list_models(str(root))
             self.assertEqual([m["repo"] for m in models], ["mlx-community/SmolLM2-135M-Instruct-4bit"])
+
+    def test_delete_only_hf_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            hub = home / "hub"
+            folder = hub / "models--mlx-community--Toy-4bit"
+            folder.mkdir(parents=True)
+            (folder / "config.json").write_text("{}", encoding="utf-8")
+            other = Path(tmp) / "lmstudio" / "Toy"
+            other.mkdir(parents=True)
+            (other / "weights.safetensors").write_bytes(b"x")
+            with mock.patch.dict(os.environ, {"HF_HOME": str(home)}, clear=False):
+                with self.assertRaises(PermissionError):
+                    resolve_hub_delete_target(str(other))
+                out = delete_hub_repo("mlx-community/Toy-4bit")
+            self.assertFalse(folder.exists())
+            self.assertTrue(other.exists())
+            self.assertEqual(out["repo"], "mlx-community/Toy-4bit")
 
 
 if __name__ == "__main__":

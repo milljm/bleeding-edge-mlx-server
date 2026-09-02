@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatContext, DIR_PLACEHOLDER, HF_HUB_WATCH, SUGGESTED_WATCH, loadTarget, sortLoadedFirst, type ModelRec } from "@/lib/models";
+import { formatContext, DIR_PLACEHOLDER, HF_HUB_WATCH, SUGGESTED_WATCH, loadTarget, modelOrigin, originLabel, sortLoadedFirst, type ModelRec } from "@/lib/models";
 import {
   getHubProgress,
   getHubStatus,
@@ -399,7 +399,12 @@ function ModelCard({
             title={status}
           />
           <span className="relative min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium">{model.name}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-sm font-medium">{model.name}</span>
+              <Badge className="shrink-0 px-1.5 py-0 text-[10px] tracking-wide">
+                {originLabel(modelOrigin(model))}
+              </Badge>
+            </span>
             <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
               <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "lm" ? "default" : "accent"}>
                 {model.engine}

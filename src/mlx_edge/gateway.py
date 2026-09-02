@@ -332,6 +332,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/hub/cancel"}:
                 self._hub_cancel()
                 return
+            if path in {"/v1/hub/delete"}:
+                self._hub_delete()
+                return
             if path in {"/v1/prefs", "/v1/studio"}:
                 self._prefs_save()
                 return
@@ -442,6 +445,26 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             from mlx_edge.hub import cancel_download
 
             self._json(cancel_download())
+
+        def _hub_delete(self) -> None:
+            from mlx_edge.hub import delete_hub_repo
+
+            try:
+                body = _read_json(self)
+            except ValueError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 400)
+                return
+            raw = str(body.get("repo") or body.get("path") or "").strip()
+            try:
+                self._json(delete_hub_repo(raw, pool=pool))
+            except FileNotFoundError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error", "code": "model_not_found"}}, 404)
+            except PermissionError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 403)
+            except ValueError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 400)
+            except Exception as extra:  # noqa: BLE001
+                self._json({"error": {"message": str(extra), "type": "server_error"}}, 500)
 
         def _load(self) -> None:
             try:
