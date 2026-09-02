@@ -176,8 +176,22 @@ export function AppShell() {
                 ) : null}
                 {served.length > 1 ? <Badge variant="ok">{served.length} loaded</Badge> : null}
               </div>
-              <p className="truncate font-mono text-xs text-muted-foreground">
-                {failedThis && !live ? failedThis : model?.repo}
+              <p className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate font-mono text-xs text-muted-foreground">
+                  {failedThis && !live ? failedThis : model?.repo}
+                </span>
+                {card ? (
+                  <a
+                    href={card.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+                    aria-label="Open model card"
+                  >
+                    Model Card
+                    <ExternalLink className="size-2.5" />
+                  </a>
+                ) : null}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
@@ -221,17 +235,6 @@ export function AppShell() {
                 <TabsTrigger value="playground">Playground</TabsTrigger>
                 <TabsTrigger value="endpoint">Endpoint</TabsTrigger>
                 <TabsTrigger value="logging">Logging</TabsTrigger>
-                {card ? (
-                  <a
-                    href={card.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                  >
-                    Model Card
-                    <ExternalLink className="size-3.5" />
-                  </a>
-                ) : null}
               </TabsList>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
