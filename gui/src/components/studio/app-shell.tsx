@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, CircleStop, Copy, Menu, PanelLeft, RefreshCw, X } from "lucide-react";
+import { Check, CircleStop, Copy, ExternalLink, Menu, PanelLeft, RefreshCw, X } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { EndpointPanel } from "@/components/studio/endpoint";
 import { FlagPanel } from "@/components/studio/flag-panel";
@@ -14,7 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { getPrefs, modelIsBusy, modelIsLive, postStop, subscribeProgress } from "@/lib/edge-api";
 import { flagsDirty } from "@/lib/flags";
 import { engineLabel, loadedSummary } from "@/lib/command";
-import { loadTarget } from "@/lib/models";
+import { loadTarget, modelCardLink } from "@/lib/models";
 import { useStudio, type StudioTab } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -44,6 +44,7 @@ export function AppShell() {
   const loadingThis = Boolean(model && loadingIds.includes(model.id));
   const failedThis = model ? failed[model.id] : undefined;
   const generating = modelIsBusy(progress, model);
+  const card = model ? modelCardLink(model) : null;
 
   async function onReload() {
     if (loadingThis || !live) return;
@@ -175,8 +176,22 @@ export function AppShell() {
                 ) : null}
                 {served.length > 1 ? <Badge variant="ok">{served.length} loaded</Badge> : null}
               </div>
-              <p className="truncate font-mono text-xs text-muted-foreground">
-                {failedThis && !live ? failedThis : model?.repo}
+              <p className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate font-mono text-xs text-muted-foreground">
+                  {failedThis && !live ? failedThis : model?.repo}
+                </span>
+                {card ? (
+                  <a
+                    href={card.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-card px-2 py-0.5 text-[10px] font-medium text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+                    aria-label="Open model card"
+                  >
+                    Model Card
+                    <ExternalLink className="size-2.5" />
+                  </a>
+                ) : null}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">

@@ -230,6 +230,49 @@ class GatewayTests(unittest.TestCase):
                 status, body = self._json("GET", "/v1/prefs")
                 self.assertEqual(body["flagsByModel"]["MiniMax"]["temp"], 0.4)
 
+    def test_hub_search_and_download(self):
+        from unittest import mock
+
+        fake = {
+            "query": "Qwen/Qwen3-8B",
+            "repo": "Qwen/Qwen3-8B",
+            "stem": "Qwen3-8B",
+            "token": True,
+            "results": [{"id": "mlx-community/Qwen3-8B-4bit", "quant": "4-bit", "downloads": 1}],
+        }
+        with mock.patch("mlx_edge.hub.token_set", return_value=True):
+            with mock.patch("mlx_edge.hub.search_quants", return_value=fake):
+                status, body = self._json("POST", "/v1/hub/search", {"query": "Qwen/Qwen3-8B"})
+            self.assertEqual(status, 200)
+            self.assertEqual(body["results"][0]["id"], "mlx-community/Qwen3-8B-4bit")
+            status, body = self._json("GET", "/v1/hub")
+            self.assertEqual(status, 200)
+            self.assertTrue(body.get("token"))
+            started = {
+                "repo": "mlx-community/Qwen3-8B-4bit",
+                "phase": "downloading",
+                "bytes": 0,
+                "total": 10,
+                "ratio": 0,
+                "error": "",
+                "path": "",
+                "token": True,
+            }
+            with mock.patch("mlx_edge.hub.start_download", return_value=started):
+                status, body = self._json("POST", "/v1/hub/download", {"repo": "mlx-community/Qwen3-8B-4bit"})
+            self.assertEqual(status, 200)
+            self.assertEqual(body["phase"], "downloading")
+            status, body = self._json("GET", "/v1/hub/progress")
+            self.assertEqual(status, 200)
+            self.assertIn("phase", body)
+
+    def test_hub_search_without_token(self):
+        from unittest import mock
+
+        with mock.patch("mlx_edge.hub.token_set", return_value=False):
+            status, body = self._json("POST", "/v1/hub/search", {"query": "Qwen/Qwen3-8B"})
+        self.assertEqual(status, 403)
+
     def test_playground_ram_roundtrip(self):
         status, body = self._json(
             "PUT",

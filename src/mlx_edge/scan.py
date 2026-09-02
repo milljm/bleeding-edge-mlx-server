@@ -257,6 +257,8 @@ def _describe(
 ) -> dict[str, Any] | None:
     if not _is_model_dir(path):
         return None
+    if hub_dir is not None and _hub_still_downloading(hub_dir):
+        return None
     cfg = _read_model_config(path)
     repo = _infer_repo(path, root, hub_dir)
     engine = _infer_engine(cfg, repo, path.name if hub_dir is None else repo)
@@ -335,6 +337,14 @@ def _has_weights(path: Path, depth: int = 0) -> bool:
                     return True
     except OSError:
         return False
+    return False
+
+
+def _hub_still_downloading(hub_dir: Path) -> bool:
+    from mlx_edge.hub import hub_dir_incomplete, is_active_hub
+
+    if is_active_hub(hub_dir) or hub_dir_incomplete(hub_dir):
+        return True
     return False
 
 

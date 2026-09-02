@@ -47,8 +47,10 @@ Serving on http://127.0.0.1:8080/v1
 
 Point any OpenAI-compatible chat client at that address. Watch folders and
 per-model settings persist in `~/.config/mlx-edge/studio.json`. Watch has a
-one-click **Hugging Face cache** (`~/.cache/huggingface/hub`) — mlx-lm / mlx-vlm
-downloads land there — and **LM Studio** (`~/.lmstudio/models`).
+one-click **Hugging Face** (`~/.cache/huggingface/hub`) — mlx-lm / mlx-vlm
+downloads land there — **LM Studio** (`~/.lmstudio/models`), and **Ollama**
+(`~/.ollama/models`). The sidebar **Hugging Face** box takes a Hub URL; Edge lists MLX quants and downloads with
+`huggingface_hub` (`HF_TOKEN` if you launched `edge-gui` with it set).
 
 Remote clients (another machine on the LAN):
 

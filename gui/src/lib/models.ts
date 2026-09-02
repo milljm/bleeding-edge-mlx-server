@@ -22,16 +22,53 @@ export const LEGACY_DEFAULT_WATCH = "~/.lmstudio/models";
 /** Default Hugging Face hub cache — mlx-lm / mlx-vlm download here. */
 export const HF_HUB_WATCH = "~/.cache/huggingface/hub";
 
+/** Ollama local weights (GGUF blobs + manifests). */
+export const OLLAMA_WATCH = "~/.ollama/models";
+
 export const DIR_PLACEHOLDER = "~/.cache/huggingface/hub";
 
 export const SUGGESTED_WATCH: { label: string; path: string }[] = [
-  { label: "Hugging Face cache", path: HF_HUB_WATCH },
+  { label: "Hugging Face", path: HF_HUB_WATCH },
   { label: "LM Studio", path: LEGACY_DEFAULT_WATCH },
+  { label: "Ollama", path: OLLAMA_WATCH },
 ];
 
 export function migrateWatchDirs(dirs?: string[] | null): string[] {
   if (!dirs || dirs.length === 0) return [];
   return [...new Set(dirs.map((d) => d.trim()).filter((d) => d.length > 0))];
+}
+
+/** Open the upstream model page. Only when the watch path is clearly Hub or Ollama. */
+export function modelCardLink(model: Pick<ModelRec, "repo" | "path" | "watchDir" | "name">): {
+  href: string;
+  host: "huggingface" | "ollama";
+} | null {
+  const watch = (model.watchDir || "").replace(/\\/g, "/").toLowerCase();
+  const path = (model.path || "").replace(/\\/g, "/").toLowerCase();
+  const blob = `${watch} ${path}`;
+  if (blob.includes("huggingface") || blob.includes("models--") || /\/hub\//.test(blob)) {
+    const id = huggingFaceId(model);
+    if (id) return { href: `https://huggingface.co/${id}`, host: "huggingface" };
+  }
+  if (blob.includes("ollama")) {
+    const name = ollamaLibraryName(model);
+    if (name) return { href: `https://ollama.com/library/${encodeURIComponent(name)}`, host: "ollama" };
+  }
+  return null;
+}
+
+function huggingFaceId(model: Pick<ModelRec, "repo" | "path">): string | null {
+  const repo = model.repo.trim();
+  if (/^[^/]+\/[^/]+$/.test(repo)) return repo;
+  const match = model.path.replace(/\\/g, "/").match(/models--([^/]+)--([^/]+)/);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+function ollamaLibraryName(model: Pick<ModelRec, "repo" | "path" | "name">): string | null {
+  const match = model.path.replace(/\\/g, "/").match(/\/library\/([^/]+)/i);
+  if (match) return match[1];
+  const leaf = (model.repo.split("/").pop() || model.name || "").trim();
+  return leaf || null;
 }
 
 export function slugModelId(engine: EngineKind, repo: string, source: ModelRec["source"] = "scan") {

@@ -1,17 +1,27 @@
 import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ChevronRight, CircleStop, Folder, PanelLeft, Play, Plus, RefreshCw, Search, Square, Trash2 } from "lucide-react";
+import { ChevronRight, CircleStop, Folder, PanelLeft, Pause, Play, Plus, RefreshCw, Search, Square, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatContext, DIR_PLACEHOLDER, SUGGESTED_WATCH, loadTarget, sortLoadedFirst, type ModelRec } from "@/lib/models";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { formatContext, DIR_PLACEHOLDER, HF_HUB_WATCH, SUGGESTED_WATCH, loadTarget, sortLoadedFirst, type ModelRec } from "@/lib/models";
 import {
+  getHubProgress,
+  getHubStatus,
   modelGeneration,
   modelIsBusy,
   modelIsLive,
   modelIsPrefill,
   modelLoadProgress,
+  postHubCancel,
+  postHubDownload,
+  postHubPause,
+  postHubResume,
+  postHubSearch,
   postStop,
+  type HubProgress,
+  type HubQuant,
   type ProgressSnapshot,
 } from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
@@ -66,7 +76,7 @@ export function Sidebar({
   }
 
   const emptyHint = !watchDirs.length
-    ? "Add a folder to watch, or the Hugging Face cache. MLX-Edge lists checkpoints it finds (config.json + weights)."
+    ? "Add a folder to watch, or Hugging Face / LM Studio / Ollama. MLX-Edge lists checkpoints it finds (config.json + weights)."
     : scanning
       ? "Scanning folders…"
       : "No models in these folders. Point at a directory that contains MLX checkpoints.";
@@ -155,6 +165,8 @@ export function Sidebar({
           </p>
         ) : null}
       </Section>
+
+      <HubPanel />
 
       <Section title="Models" count={models.length} defaultOpen className="min-h-0 flex-1 border-t border-border">
         <div className="px-4 pb-2">
@@ -425,6 +437,220 @@ function ModelCard({
         </button>
       </div>
     </li>
+  );
+}
+
+function HubPanel() {
+  const watchDirs = useStudio((s) => s.watchDirs);
+  const addWatchDir = useStudio((s) => s.addWatchDir);
+  const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
+  const [draft, setDraft] = useState("");
+  const [token, setToken] = useState(false);
+  const [help, setHelp] = useState(
+    "Create a Hugging Face account, copy a token from huggingface.co/settings/tokens, then launch edge-gui with HF_TOKEN set.",
+  );
+  const [results, setResults] = useState<HubQuant[]>([]);
+  const [picked, setPicked] = useState("");
+  const [busy, setBusy] = useState<"search" | null>(null);
+  const [job, setJob] = useState<HubProgress | null>(null);
+
+  const downloading = job?.phase === "downloading" || job?.phase === "paused";
+  const fill = Math.max(0, Math.min(1, job?.ratio ?? 0));
+  const locked = !token;
+
+  useEffect(() => {
+    void getHubStatus()
+      .then((s) => {
+        setToken(s.token);
+        if (s.help) setHelp(s.help);
+      })
+      .catch(() => setToken(false));
+  }, []);
+
+  useEffect(() => {
+    if (!downloading) return;
+    let stop = false;
+    const tick = async () => {
+      try {
+        const snap = await getHubProgress();
+        if (stop) return;
+        setJob(snap);
+        if (snap.phase === "done") {
+          toast.success(`Downloaded ${snap.repo}`);
+          if (!watchDirs.includes(HF_HUB_WATCH)) await addWatchDir(HF_HUB_WATCH);
+          else await scanWatchDirs();
+        } else if (snap.phase === "error") {
+          toast.error(snap.error || "Download failed");
+        } else if (snap.phase === "cancelled") {
+          toast.message("Download cancelled");
+        }
+      } catch {
+        /* keep last snapshot */
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 400);
+    return () => {
+      stop = true;
+      window.clearInterval(id);
+    };
+  }, [downloading, addWatchDir, scanWatchDirs, watchDirs]);
+
+  async function lookup(e?: FormEvent) {
+    e?.preventDefault();
+    const query = draft.trim();
+    if (!query || locked) return;
+    setBusy("search");
+    try {
+      const out = await postHubSearch(query);
+      setToken(out.token);
+      setResults(out.results);
+      const prefer = out.results.find((r) => r.quant === "4-bit") ?? out.results[0];
+      setPicked(prefer?.id ?? "");
+      if (!out.results.length) toast.error("No MLX quants for that repo");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Hub search failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function download() {
+    if (!picked || locked || downloading) return;
+    try {
+      const snap = await postHubDownload(picked);
+      setJob(snap);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Download failed");
+    }
+  }
+
+  const tokenTip = (
+    <span>
+      {help}{" "}
+      <a
+        href="https://huggingface.co/settings/tokens"
+        target="_blank"
+        rel="noreferrer"
+        className="underline"
+      >
+        huggingface.co/settings/tokens
+      </a>
+    </span>
+  );
+
+  return (
+    <Section title="Hugging Face" defaultOpen>
+      <form onSubmit={lookup} className="flex gap-2 px-4">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="https://huggingface.co/mlx-community/…"
+          className="h-9 font-mono text-xs"
+          aria-label="Hugging Face model URL"
+          disabled={locked}
+        />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button
+                type="submit"
+                variant="secondary"
+                size="icon-sm"
+                className="size-9"
+                aria-label="Find MLX quants"
+                disabled={locked || !draft.trim() || busy !== null || downloading}
+              >
+                <Search className={cn(busy === "search" && "animate-spin")} />
+              </Button>
+            </span>
+          </TooltipTrigger>
+          {locked ? <TooltipContent className="max-w-xs">{tokenTip}</TooltipContent> : null}
+        </Tooltip>
+      </form>
+      {results.length ? (
+        <div className="mt-2 space-y-2 px-4 pb-3">
+          <select
+            className="flex h-9 w-full rounded-md border border-input bg-card px-2 font-mono text-xs"
+            value={picked}
+            onChange={(e) => setPicked(e.target.value)}
+            aria-label="MLX quant"
+            disabled={locked || downloading}
+          >
+            {results.map((row) => (
+              <option key={row.id} value={row.id}>
+                {row.quant} · {row.id}
+              </option>
+            ))}
+          </select>
+          <div className="relative flex overflow-hidden rounded-lg border border-border">
+            <button
+              type="button"
+              disabled={locked || !picked || downloading}
+              onClick={() => void download()}
+              className="relative flex min-h-9 min-w-0 flex-1 items-center justify-center px-3 text-xs font-medium"
+            >
+              {downloading ? (
+                <span
+                  className="load-fill"
+                  style={{ "--load-pct": String(fill) } as CSSProperties}
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(fill * 100)}
+                />
+              ) : null}
+              <span className="relative z-[1]">
+                {job?.phase === "paused"
+                  ? `Paused ${Math.round(fill * 100)}%`
+                  : downloading
+                    ? `Downloading ${Math.round(fill * 100)}%`
+                    : "Download"}
+              </span>
+            </button>
+            {downloading ? (
+              <>
+                <button
+                  type="button"
+                  className="relative z-[1] flex w-9 shrink-0 items-center justify-center border-l border-border bg-secondary hover:bg-accent"
+                  aria-label={job?.phase === "paused" ? "Resume download" : "Pause download"}
+                  onClick={() => void (job?.phase === "paused" ? postHubResume() : postHubPause()).then(setJob)}
+                >
+                  {job?.phase === "paused" ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  className="relative z-[1] flex w-9 shrink-0 items-center justify-center border-l border-border bg-destructive text-primary-foreground hover:opacity-90"
+                  aria-label="Cancel download"
+                  onClick={() => void postHubCancel().then(setJob)}
+                >
+                  <Square className="size-3.5" />
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : (
+        <p className="px-4 pb-3 pt-2 text-[11px] text-muted-foreground">
+          {locked ? (
+            <>
+              Set <span className="font-mono">HF_TOKEN</span> when launching Edge.{" "}
+              <a
+                href="https://huggingface.co/settings/tokens"
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-foreground"
+              >
+                Create a token
+              </a>
+              .
+            </>
+          ) : (
+            "Paste a Hub URL or org/name. Dropdown lists MLX quants."
+          )}
+        </p>
+      )}
+    </Section>
   );
 }
 

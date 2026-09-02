@@ -197,6 +197,89 @@ export async function postScan(dirs: string[]): Promise<{ models: ModelRec[]; er
   return { models: body.models ?? [], errors: body.errors ?? [] };
 }
 
+export type HubQuant = { id: string; quant: string; downloads: number };
+
+export type HubProgress = {
+  repo: string;
+  phase: "idle" | "downloading" | "paused" | "done" | "error" | "cancelled";
+  bytes: number;
+  total: number;
+  ratio: number;
+  error: string;
+  path: string;
+  token: boolean;
+};
+
+export async function getHubStatus(): Promise<{ token: boolean; help: string }> {
+  const res = await fetch("/v1/hub");
+  const body = (await parseJson(res)) as { token?: boolean; help?: string };
+  return { token: Boolean(body.token), help: String(body.help || "") };
+}
+
+export async function getHubProgress(): Promise<HubProgress> {
+  const res = await fetch("/v1/hub/progress");
+  const body = (await parseJson(res)) as Partial<HubProgress>;
+  return {
+    repo: String(body.repo || ""),
+    phase: (body.phase as HubProgress["phase"]) || "idle",
+    bytes: Number(body.bytes || 0),
+    total: Number(body.total || 0),
+    ratio: Number(body.ratio || 0),
+    error: String(body.error || ""),
+    path: String(body.path || ""),
+    token: Boolean(body.token),
+  };
+}
+
+export async function postHubSearch(query: string): Promise<{
+  repo: string;
+  stem: string;
+  token: boolean;
+  results: HubQuant[];
+}> {
+  const res = await fetch("/v1/hub/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const body = (await parseJson(res)) as {
+    repo?: string;
+    stem?: string;
+    token?: boolean;
+    results?: HubQuant[];
+  };
+  return {
+    repo: body.repo ?? "",
+    stem: body.stem ?? "",
+    token: Boolean(body.token),
+    results: Array.isArray(body.results) ? body.results : [],
+  };
+}
+
+export async function postHubDownload(repo: string): Promise<HubProgress> {
+  const res = await fetch("/v1/hub/download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo }),
+  });
+  return (await parseJson(res)) as HubProgress;
+}
+
+export async function postHubPause(): Promise<HubProgress> {
+  const res = await fetch("/v1/hub/pause", { method: "POST" });
+  return (await parseJson(res)) as HubProgress;
+}
+
+export async function postHubResume(): Promise<HubProgress> {
+  const res = await fetch("/v1/hub/resume", { method: "POST" });
+  return (await parseJson(res)) as HubProgress;
+}
+
+export async function postHubCancel(): Promise<HubProgress> {
+  const res = await fetch("/v1/hub/cancel", { method: "POST" });
+  return (await parseJson(res)) as HubProgress;
+}
+
 export type ProgressPhase = "idle" | "loading" | "prefill" | "decode" | "done" | "error";
 export type ProgressStatus = "ready" | "processing" | "complete" | "error";
 
