@@ -40,7 +40,7 @@ export function engineLabel(engine: EngineKind) {
 }
 
 export function loadedSummary(loaded: ServedRuntime[]): string {
-  if (!loaded.length) return "idle · press Serve to hot-load /v1";
+  if (!loaded.length) return "idle · play on a model card to hot-load /v1";
   if (loaded.length === 1) return `1 loaded · ${loaded[0]?.name || loaded[0]?.repo}`;
   return `${loaded.length} loaded`;
 }

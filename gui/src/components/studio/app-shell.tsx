@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, CircleStop, Copy, Menu, PanelLeft, Play, RefreshCw, Square, X } from "lucide-react";
+import { Check, CircleStop, Copy, Menu, PanelLeft, RefreshCw, X } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { EndpointPanel } from "@/components/studio/endpoint";
 import { FlagPanel } from "@/components/studio/flag-panel";
@@ -33,8 +33,6 @@ export function AppShell() {
   const gateway = useStudio((s) => s.gateway);
   const tab = useStudio((s) => s.tab);
   const setTab = useStudio((s) => s.setTab);
-  const startServe = useStudio((s) => s.startServe);
-  const stopServe = useStudio((s) => s.stopServe);
   const reloadServe = useStudio((s) => s.reloadServe);
   const loadingIds = useStudio((s) => s.loadingIds);
   const failed = useStudio((s) => s.failed);
@@ -46,16 +44,6 @@ export function AppShell() {
   const loadingThis = Boolean(model && loadingIds.includes(model.id));
   const failedThis = model ? failed[model.id] : undefined;
   const generating = modelIsBusy(progress, model);
-
-  async function onServe() {
-    if (loadingThis) return;
-    try {
-      if (live) await stopServe();
-      else await startServe();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Serve failed");
-    }
-  }
 
   async function onReload() {
     if (loadingThis || !live) return;
@@ -217,25 +205,6 @@ export function AppShell() {
                   Reload
                 </Button>
               ) : null}
-              <Button
-                type="button"
-                variant={live ? "destructive" : failedThis ? "destructive" : "default"}
-                size="sm"
-                onClick={() => void onServe()}
-                disabled={!model || loadingThis}
-              >
-                {live ? (
-                  <>
-                    <Square className="size-3.5" />
-                    Unload
-                  </>
-                ) : (
-                  <>
-                    <Play className={cn("size-3.5", loadingThis && "animate-pulse")} />
-                    {loadingThis ? "Loading" : "Serve"}
-                  </>
-                )}
-              </Button>
               <ThemeToggle />
             </div>
           </header>

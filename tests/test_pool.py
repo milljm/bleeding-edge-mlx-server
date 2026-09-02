@@ -170,6 +170,13 @@ class PoolTests(unittest.TestCase):
             tmpl.assert_called_once()
             self.assertEqual(tmpl.call_args[0][0], "qwen")
 
+    def test_vlm_load_skips_chat_template_inject(self):
+        """mlx-vlm.server has no --chat-template; injecting it would crash the child."""
+        with mock.patch("mlx_edge.pool.template_for_spawn") as tmpl:
+            pool = self._pool()
+            pool.load("vlm", "vision")
+            tmpl.assert_not_called()
+
     def test_warmup_skipped_when_spawn_returns_none(self):
         with mock.patch("mlx_edge.pool.warmup_engine") as warm:
             pool = self._pool()

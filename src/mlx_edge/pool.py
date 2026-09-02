@@ -306,7 +306,7 @@ class ModelPool:
 
     def load(self, engine: str, model: str, extra: list[str] | None = None) -> LoadedModel:
         extra = list(extra or [])
-        if engine in {"lm", "vlm"}:
+        if engine == "lm":
             extra = template_for_spawn(model, extra)
         existing = self.resolve(model)
         if existing:
