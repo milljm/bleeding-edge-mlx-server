@@ -229,6 +229,27 @@ class ScanTests(unittest.TestCase):
             (hub / "refs").mkdir()
             self.assertEqual(list_models(str(root)), [])
 
+    def test_clip_encoder_is_not_listed(self):
+        """openai/clip-vit is a dual encoder. mlx-vlm has no Serve path for it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--openai--clip-vit-large-patch14"
+            snap = hub / "snapshots" / "abc"
+            snap.mkdir(parents=True)
+            (snap / "config.json").write_text(
+                json.dumps({
+                    "model_type": "clip",
+                    "architectures": ["CLIPModel"],
+                    "vision_config": {"hidden_size": 1024},
+                    "text_config": {"hidden_size": 768},
+                }),
+                encoding="utf-8",
+            )
+            (snap / "model.safetensors").write_bytes(b"w")
+            (hub / "blobs").mkdir()
+            (hub / "refs").mkdir()
+            self.assertEqual(list_models(str(root)), [])
+
     def test_hub_diffusers_model_index(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

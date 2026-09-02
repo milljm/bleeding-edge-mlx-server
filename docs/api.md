@@ -83,8 +83,9 @@ basename (any case), `org/name`, or the path.
   diffusers weights (`model_index.json`). A snapshot still needs a typed config
   (`model_type`, `architectures`, or `_class_name`). hexgrad/Kokoro's
   `config.json` is an istftnet dump with none of those — skipped.
-  mlx-community conversions are kept. `datasets--` / `spaces--` / `blobs` /
-  `refs` are skipped.
+  mlx-community conversions are kept. Encoder-only checkpoints (`clip`, `siglip`,
+  `vit`) are skipped — mlx-vlm has no Serve path (it looks for a speculative
+  drafter). `datasets--` / `spaces--` / `blobs` / `refs` are skipped.
 - `GET /health` — `{status, models, host, port, bind, url}`
 
 ## Progress
