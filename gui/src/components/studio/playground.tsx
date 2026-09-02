@@ -5,6 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "@/components/studio/markdown";
 import {
   clearPlayground,
+  deltaCompletionTokens,
   deltaContent,
   deltaReasoning,
   getPlayground,
@@ -14,6 +15,7 @@ import {
   postStop,
   putPlayground,
   type ModelProgress,
+  type PlaygroundMetrics,
   type PlaygroundTurn,
 } from "@/lib/edge-api";
 import { loadTarget, publicName } from "@/lib/models";
@@ -198,6 +200,7 @@ function ChatPlayground({ live }: { live: boolean }) {
   const stickRef = useRef(true);
   const programmaticRef = useRef(false);
   const readyRef = useRef(false);
+  const genTokensRef = useRef(0);
   const remoteBusy = modelIsBusy(progressSnap, model);
   const stopping = busy || remoteBusy;
 
@@ -255,7 +258,12 @@ function ChatPlayground({ live }: { live: boolean }) {
     async function tick() {
       try {
         const snap = await getProgress(publicName(model!));
-        if (!stop) setProgress(snap.models[0] ?? null);
+        if (!stop) {
+          const row = snap.models[0] ?? null;
+          setProgress(row);
+          const n = row?.generation?.tokens ?? 0;
+          if (n > 0) genTokensRef.current = n;
+        }
       } catch {
         /* preview or network blip */
       }
@@ -306,8 +314,24 @@ function ChatPlayground({ live }: { live: boolean }) {
     let reasoning = "";
     const ac = new AbortController();
     abortRef.current = ac;
-    const paint = (value: string, thinkText = "") =>
-      setTurns([...next, { role: "assistant", text: value, thinking: thinkText || undefined }]);
+    genTokensRef.current = 0;
+    const started = performance.now();
+    let firstAt = 0;
+    let usageTokens = 0;
+    const modelLabel = publicName(model);
+    const paint = (value: string, thinkText = "", metrics?: PlaygroundMetrics) =>
+      setTurns([
+        ...next,
+        { role: "assistant", text: value, thinking: thinkText || undefined, metrics },
+      ]);
+    const finish = (value: string, thinkText = "") => {
+      const end = performance.now();
+      const ttft = ((firstAt || end) - started) / 1000;
+      const gen = firstAt ? Math.max(0, (end - firstAt) / 1000) : 0;
+      const tokens = usageTokens || genTokensRef.current || estimateTokens(`${value} ${thinkText}`);
+      const tps = gen > 0 ? tokens / gen : 0;
+      paint(value, thinkText, { ttft, gen, tokens, tps, model: modelLabel });
+    };
     try {
       const res = await fetch("/v1/chat/completions", {
         method: "POST",
@@ -345,24 +369,31 @@ function ChatPlayground({ live }: { live: boolean }) {
                 const payload = JSON.parse(data);
                 const piece = deltaContent(payload);
                 const think = deltaReasoning(payload);
+                const used = deltaCompletionTokens(payload);
+                if (used) usageTokens = used;
                 if (think) reasoning += think;
                 if (piece) assistant += piece;
-                if (piece || think) paint(assistant, reasoning);
+                if (piece || think) {
+                  if (!firstAt) firstAt = performance.now();
+                  paint(assistant, reasoning);
+                }
               } catch {
                 /* ignore malformed chunk */
               }
             }
           }
         }
-        if (!assistant) paint(reasoning.trim() ? "" : "(empty)", reasoning.trim());
-        else paint(assistant, reasoning);
+        if (!assistant) finish(reasoning.trim() ? "" : "(empty)", reasoning.trim());
+        else finish(assistant, reasoning);
       } else {
         const body = (await res.json()) as {
           choices?: { message?: { content?: string; reasoning_content?: string } }[];
+          usage?: { completion_tokens?: number };
         };
+        usageTokens = Number(body.usage?.completion_tokens || 0);
+        if (!firstAt) firstAt = performance.now();
         const msg = body.choices?.[0]?.message;
-        paint((msg?.content || "").trim(), (msg?.reasoning_content || "").trim());
-        if (!msg?.content && !msg?.reasoning_content) paint("(empty)");
+        finish((msg?.content || "").trim() || ((msg?.reasoning_content || "").trim() ? "" : "(empty)"), (msg?.reasoning_content || "").trim());
       }
     } catch (err) {
       if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
@@ -460,6 +491,9 @@ function ChatPlayground({ live }: { live: boolean }) {
                   ) : stopping && i === turns.length - 1 && turn.role === "assistant" ? (
                     <span className="inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
                   ) : null}
+                  {turn.role === "assistant" && turn.metrics && !(stopping && i === turns.length - 1) ? (
+                    <MetricsLine metrics={turn.metrics} />
+                  ) : null}
                 </>
               )}
             </article>
@@ -525,4 +559,29 @@ function PrefillMeter({
       </div>
     </div>
   );
+}
+
+function MetricsLine({ metrics }: { metrics: PlaygroundMetrics }) {
+  const bits = [
+    { tip: "Time to first token", text: `TTFT ${metrics.ttft.toFixed(2)}s` },
+    { tip: "Generation time after first token", text: `Gen ${metrics.gen.toFixed(2)}s` },
+    { tip: "Completion tokens", text: `${metrics.tokens} tok` },
+    { tip: "Tokens per second", text: `${metrics.tps.toFixed(1)} T/s` },
+    { tip: "Model", text: metrics.model },
+  ];
+  return (
+    <p className="mt-3 flex flex-wrap items-center gap-x-1.5 font-mono text-[10px] tabular-nums text-muted-foreground">
+      {bits.map((bit, i) => (
+        <span key={bit.tip}>
+          {i ? <span aria-hidden> · </span> : null}
+          <span title={bit.tip}>{bit.text}</span>
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function estimateTokens(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(words ? Math.round(words * 1.3) : 0, 0);
 }
