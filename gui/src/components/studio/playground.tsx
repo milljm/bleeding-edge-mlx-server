@@ -176,8 +176,8 @@ function AudioHint({ engine, live }: { engine: EngineKind; live: boolean }) {
     <div className="flex flex-1 flex-col items-start justify-center">
       <p className="max-w-md text-sm text-muted-foreground">
         {live
-          ? `Playground is text-only. This ${engine.toUpperCase()} model is served — POST ${route} from any OpenAI-compatible client.`
-          : `Serve this ${engine.toUpperCase()} model to expose ${route}. Playground stays text-only.`}
+          ? `Playground is text-only. This ${engine.toUpperCase()} model is served — POST ${route} from any OpenAI-compatible client. See Endpoint for more information on how to use this model.`
+          : `Serve this ${engine.toUpperCase()} model to expose ${route}. Playground stays text-only. See Endpoint for more information on how to use this model.`}
       </p>
     </div>
   );

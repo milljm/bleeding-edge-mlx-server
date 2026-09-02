@@ -1,14 +1,13 @@
 import { Check, Copy } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { guiCommand, loadCommand, engineLabel } from "@/lib/command";
+import { engineLabel } from "@/lib/command";
 import { publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 
 export function EndpointPanel() {
   const served = useStudio((s) => s.served);
   const model = useStudio((s) => s.selected());
-  const flags = useStudio((s) => s.flags);
   const gateway = useStudio((s) => s.gateway);
 
   if (!model) return null;
@@ -47,8 +46,6 @@ export function EndpointPanel() {
           Nothing loaded. Serve hot-loads into mlx-edge without replacing models that are already up.
         </p>
       )}
-      <CopyBlock label="start GUI + gateway" code={guiCommand(gateway)} />
-      <CopyBlock label="hot-load this model" code={loadCommand(model, flags)} />
       {embed ? (
         <CopyBlock
           label="curl embeddings"

@@ -6,6 +6,7 @@ from mlx_edge.pool import (
     Inflight,
     ModelPool,
     annotate_load_error,
+    basename_id,
     names_match,
     server_argv,
     spawn_argv,
@@ -56,6 +57,16 @@ class PoolTests(unittest.TestCase):
         item = pool.load("lm", "/models/thetom-ai/MiniMax-M2.7-ConfigI-MLX")
         self.assertEqual(item.as_openai()["id"], "MiniMax-M2.7-ConfigI-MLX")
         self.assertEqual(unique_public_id("/a/MiniMax", ["MiniMax"]), "a/MiniMax")
+
+    def test_hub_snapshot_public_id_is_repo_name(self):
+        path = "/Users/me/.cache/huggingface/hub/models--ResembleAI--chatterbox/snapshots/05e904af2b5c7f8e482687a9d7336c5c824467d9"
+        self.assertEqual(basename_id(path), "chatterbox")
+        pool = self._pool()
+        item = pool.load("tts", path)
+        self.assertEqual(item.public_id, "chatterbox")
+        self.assertEqual(item.as_openai()["id"], "chatterbox")
+        self.assertIsNotNone(pool.resolve("chatterbox"))
+        self.assertIsNotNone(pool.resolve("05e904af2b5c7f8e482687a9d7336c5c824467d9"))
 
     def test_reload_replaces_same_id(self):
         pool = self._pool()
