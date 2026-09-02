@@ -264,7 +264,7 @@ class GatewayTests(unittest.TestCase):
             self.assertEqual(body["phase"], "downloading")
             status, body = self._json("GET", "/v1/hub/progress")
             self.assertEqual(status, 200)
-            self.assertIn("phase", body)
+            self.assertIn("jobs", body)
 
     def test_hub_search_without_token(self):
         from unittest import mock

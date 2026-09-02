@@ -8,12 +8,14 @@ from pathlib import Path
 from unittest import mock
 
 from mlx_edge.hub import (
-    JOB,
+    QUEUE,
     delete_hub_repo,
+    download_progress,
     download_repo,
     hub_downloaded_bytes,
     human_bytes,
     parse_repo,
+    repo_nbytes,
     resolve_hub_delete_target,
     search_quants,
     search_stem,
@@ -69,17 +71,7 @@ class LiveProc:
 
 class HubTests(unittest.TestCase):
     def setUp(self):
-        JOB.cancel.set()
-        if JOB.thread and JOB.thread.is_alive():
-            JOB.thread.join(timeout=1)
-        JOB.phase = "idle"
-        JOB.repo = ""
-        JOB.error = ""
-        JOB.path = ""
-        JOB.n = 0
-        JOB.total = 0
-        JOB.proc = None
-        JOB.cancel.clear()
+        QUEUE.clear()
 
     def test_parse_url_and_repo(self):
         self.assertEqual(
@@ -136,25 +128,28 @@ class HubTests(unittest.TestCase):
                 with mock.patch("mlx_edge.hub._spawn_download", return_value=InstantProc()):
                     out = download_repo("mlx-community/SmolLM2-135M-Instruct-4bit")
         self.assertEqual(out["repo"], "mlx-community/SmolLM2-135M-Instruct-4bit")
-        self.assertEqual(JOB.phase, "done")
+        jobs = download_progress()["jobs"]
+        self.assertEqual(jobs[-1]["phase"], "done")
 
     def test_pause_sends_sigstop(self):
         proc = LiveProc()
+        repo = "mlx-community/SmolLM2-135M-Instruct-4bit"
         with mock.patch.dict(os.environ, {"HF_TOKEN": "hf_test"}, clear=False):
             with mock.patch("mlx_edge.hub.repo_nbytes", return_value=1000):
                 with mock.patch("mlx_edge.hub._spawn_download", return_value=proc):
-                    start_download("mlx-community/SmolLM2-135M-Instruct-4bit")
+                    start_download(repo)
+                    job = QUEUE.jobs[repo]
                     for _ in range(20):
-                        if JOB.proc is proc:
+                        if job.proc is proc:
                             break
                         threading.Event().wait(0.05)
-                    snap = JOB.request_pause()
+                    snap = QUEUE.pause(repo)
                     self.assertEqual(snap["phase"], "paused")
                     self.assertIn(signal.SIGSTOP, proc.signals)
-                    snap = JOB.request_resume()
+                    snap = QUEUE.resume(repo)
                     self.assertEqual(snap["phase"], "downloading")
                     self.assertIn(signal.SIGCONT, proc.signals)
-                    JOB.request_cancel()
+                    QUEUE.cancel(repo)
                     self.assertFalse(proc.alive)
 
     def test_start_download_returns_before_finish(self):
@@ -165,9 +160,10 @@ class HubTests(unittest.TestCase):
                     snap = start_download("mlx-community/SmolLM2-135M-Instruct-4bit")
                     self.assertEqual(snap["phase"], "downloading")
                     proc.alive = False
-                    if JOB.thread:
-                        JOB.thread.join(timeout=2)
-        self.assertEqual(JOB.phase, "done")
+                    job = QUEUE.jobs[snap["repo"]]
+                    if job.thread:
+                        job.thread.join(timeout=2)
+        self.assertEqual(QUEUE.jobs[snap["repo"]].phase, "done")
 
     def test_hub_downloaded_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -215,6 +211,79 @@ class HubTests(unittest.TestCase):
             self.assertFalse(folder.exists())
             self.assertTrue(other.exists())
             self.assertEqual(out["repo"], "mlx-community/Toy-4bit")
+
+    def test_repo_nbytes_prefers_lfs_size(self):
+        payload = {"siblings": [{"rfilename": "w.safetensors", "size": 130, "lfs": {"size": 4_000_000}}]}
+
+        class Resp:
+            def read(self):
+                return json.dumps(payload).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with mock.patch("urllib.request.urlopen", return_value=Resp()):
+            self.assertEqual(repo_nbytes("mlx-community/Toy-4bit"), 4_000_000)
+
+    def test_repo_nbytes_keeps_slash_and_used_storage(self):
+        seen: list[str] = []
+
+        def fake_open(req, timeout=12):
+            seen.append(req.full_url)
+
+            class Resp:
+                def read(self):
+                    return json.dumps({"siblings": [{"size": 10}], "usedStorage": 99}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            return Resp()
+
+        with mock.patch("urllib.request.urlopen", fake_open):
+            n = repo_nbytes("mlx-community/gemma-4-e2b-it-4bit")
+        self.assertEqual(n, 10)
+        self.assertTrue(any("mlx-community/gemma-4-e2b-it-4bit?blobs=true" in url for url in seen))
+        self.assertFalse(any("%2F" in url for url in seen))
+
+        def storage_only(req, timeout=12):
+            class Resp:
+                def read(self):
+                    return json.dumps({"siblings": [], "usedStorage": 7163942076}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            return Resp()
+
+        with mock.patch("urllib.request.urlopen", storage_only):
+            self.assertEqual(repo_nbytes("mlx-community/gemma-4-e2b-it-4bit"), 7163942076)
+
+    def test_two_downloads_no_duplicate(self):
+        a, b = LiveProc(), LiveProc()
+
+        def spawn(repo):
+            return a if "Smol" in repo else b
+
+        with mock.patch.dict(os.environ, {"HF_TOKEN": "hf_test"}, clear=False):
+            with mock.patch("mlx_edge.hub.repo_nbytes", return_value=1000):
+                with mock.patch("mlx_edge.hub._spawn_download", side_effect=spawn):
+                    start_download("mlx-community/SmolLM2-135M-Instruct-4bit")
+                    start_download("mlx-community/Qwen3-8B-4bit")
+                    again = start_download("mlx-community/SmolLM2-135M-Instruct-4bit")
+        jobs = [j for j in download_progress()["jobs"] if j["phase"] in {"downloading", "paused"}]
+        self.assertEqual({j["repo"] for j in jobs}, {"mlx-community/SmolLM2-135M-Instruct-4bit", "mlx-community/Qwen3-8B-4bit"})
+        self.assertEqual(again["repo"], "mlx-community/SmolLM2-135M-Instruct-4bit")
+        self.assertEqual(len(QUEUE.jobs), 2)
 
 
 if __name__ == "__main__":

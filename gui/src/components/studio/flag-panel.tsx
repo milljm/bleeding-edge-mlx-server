@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { engineLabel } from "@/lib/command";
 import { fetchTemplate, modelIsLive, postHubDelete } from "@/lib/edge-api";
 import { flagsDirty, flagsFor, type EngineKind, type FlagDef, type FlagGroup } from "@/lib/flags";
-import { flagKey, formatContext, loadTarget, modelOrigin, originLabel } from "@/lib/models";
+import { flagKey, formatContext, loadTarget, modelOrigin } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -315,7 +315,7 @@ function DeleteModelCard() {
     try {
       if (live) await stopServe(model.id);
       await postHubDelete(model.repo);
-      toast.success(`Removed ${model.repo} from the Hugging Face cache`);
+      toast.success(`Deleted ${model.name}`);
       setConfirm(false);
       await scanWatchDirs();
     } catch (err) {
@@ -327,12 +327,12 @@ function DeleteModelCard() {
 
   const copy =
     origin === "lmstudio"
-      ? "This checkpoint lives in LM Studio’s models folder. Remove it from LM Studio — Edge will not delete those files."
+      ? "Remove this model in LM Studio."
       : origin === "ollama"
-        ? "This checkpoint lives in Ollama’s models folder. Remove it with ollama rm or the Ollama app — Edge will not delete those files."
+        ? "Remove this model in Ollama."
         : origin === "huggingface"
-          ? "Edge downloaded this into the Hugging Face cache, so Edge can remove it. That deletes the local copy only, not the Hub repo."
-          : "This folder is one you asked Edge to watch. Delete it on disk, then Rescan — Edge will not remove files outside the Hugging Face cache.";
+          ? "Deletes the local files."
+          : "Delete the folder on disk, then Rescan.";
 
   return (
     <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
@@ -341,25 +341,24 @@ function DeleteModelCard() {
         <p className="mt-1 max-w-lg text-sm text-muted-foreground">{copy}</p>
       </div>
       {origin === "huggingface" ? (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant={confirm ? "destructive" : "secondary"}
+            size="sm"
+            className="shrink-0"
+            disabled={busy}
+            onClick={() => (confirm ? void remove() : setConfirm(true))}
+          >
+            {busy ? "Deleting…" : "Delete"}
+          </Button>
           {confirm ? (
-            <>
-              <Button type="button" variant="destructive" size="sm" disabled={busy} onClick={() => void remove()}>
-                {busy ? "Removing…" : `Really delete ${model.name}?`}
-              </Button>
-              <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setConfirm(false)}>
-                Cancel
-              </Button>
-            </>
-          ) : (
-            <Button type="button" variant="secondary" size="sm" onClick={() => setConfirm(true)}>
-              Remove from Hugging Face cache
+            <Button type="button" variant="ghost" size="sm" className="shrink-0" disabled={busy} onClick={() => setConfirm(false)}>
+              Cancel
             </Button>
-          )}
+          ) : null}
         </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">Source: {originLabel(origin)}</p>
-      )}
+      ) : null}
     </section>
   );
 }

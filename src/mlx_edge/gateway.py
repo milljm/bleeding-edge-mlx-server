@@ -434,17 +434,38 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
         def _hub_pause(self) -> None:
             from mlx_edge.hub import pause_download
 
-            self._json(pause_download())
+            try:
+                body = _read_json(self)
+            except ValueError:
+                body = {}
+            try:
+                self._json(pause_download(str(body.get("repo") or "") or None))
+            except ValueError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 400)
 
         def _hub_resume(self) -> None:
             from mlx_edge.hub import resume_download
 
-            self._json(resume_download())
+            try:
+                body = _read_json(self)
+            except ValueError:
+                body = {}
+            try:
+                self._json(resume_download(str(body.get("repo") or "") or None))
+            except ValueError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 400)
 
         def _hub_cancel(self) -> None:
             from mlx_edge.hub import cancel_download
 
-            self._json(cancel_download())
+            try:
+                body = _read_json(self)
+            except ValueError:
+                body = {}
+            try:
+                self._json(cancel_download(str(body.get("repo") or "") or None))
+            except ValueError as extra:
+                self._json({"error": {"message": str(extra), "type": "invalid_request_error"}}, 400)
 
         def _hub_delete(self) -> None:
             from mlx_edge.hub import delete_hub_repo

@@ -215,7 +215,7 @@ def delete_hub_repo(raw: str, pool: Any | None = None) -> dict[str, Any]:
 
 
 def is_active_hub(path: Path) -> bool:
-    return JOB.is_active(path)
+    return QUEUE.is_active(path)
 
 
 def hub_dir_incomplete(hub_dir: Path) -> bool:
@@ -239,22 +239,59 @@ def hub_dir_incomplete(hub_dir: Path) -> bool:
 
 
 def repo_nbytes(repo: str) -> int:
-    url = f"{HF_API}/{urllib.parse.quote(repo, safe='')}?blobs=true"
+    """Hub file sizes. Keep the slash in org/name — %2F 404s and we used to log 'size unknown'."""
+    data = _hub_json(f"{HF_API}/{urllib.parse.quote(repo, safe='/')}?blobs=true")
+    total = _siblings_nbytes(data)
+    if total:
+        return total
+    if not data:
+        data = _hub_json(f"{HF_API}/{urllib.parse.quote(repo, safe='/')}") or {}
+        total = _siblings_nbytes(data)
+        if total:
+            return total
+    try:
+        stored = int((data or {}).get("usedStorage") or 0)
+    except (TypeError, ValueError):
+        stored = 0
+    if stored:
+        return stored
+    tree = _hub_json(
+        f"https://huggingface.co/api/models/{urllib.parse.quote(repo, safe='/')}/tree/main?recursive=true"
+    )
+    if isinstance(tree, list):
+        return sum(_entry_size(row) for row in tree if isinstance(row, dict) and row.get("type") != "directory")
+    return 0
+
+
+def _hub_json(url: str) -> Any:
     req = urllib.request.Request(url, headers=hf_headers())
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return None
+
+
+def _siblings_nbytes(data: Any) -> int:
+    if not isinstance(data, dict):
         return 0
-    total = 0
-    for sib in data.get("siblings") or []:
-        if not isinstance(sib, dict):
-            continue
+    return sum(_entry_size(sib) for sib in (data.get("siblings") or []) if isinstance(sib, dict))
+
+
+def _entry_size(row: dict[str, Any]) -> int:
+    sizes = [0]
+    for raw in (row.get("size"),):
         try:
-            total += int(sib.get("size") or 0)
+            sizes.append(int(raw or 0))
         except (TypeError, ValueError):
-            continue
-    return total
+            pass
+    lfs = row.get("lfs")
+    if isinstance(lfs, dict):
+        try:
+            sizes.append(int(lfs.get("size") or 0))
+        except (TypeError, ValueError):
+            pass
+    return max(sizes)
 
 
 def hub_downloaded_bytes(hub_dir: Path) -> int:
@@ -350,19 +387,23 @@ class HubJob:
         self.proc: subprocess.Popen[bytes] | None = None
         self.logs: Any | None = None
         self._logged_pct = -1
+        self.finished_at = 0.0
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             total = self.total
             n = self.n
             ratio = min(1.0, n / total) if total else (1.0 if self.phase == "done" else 0.0)
+            pct = round(100.0 * n / total, 1) if total else None
             detail = f"{human_bytes(n)} / {human_bytes(total)}" if total else (human_bytes(n) if n else "")
             return {
                 "repo": self.repo,
+                "name": self.repo.split("/")[-1] if self.repo else "",
                 "phase": self.phase,
                 "bytes": n,
                 "total": total,
                 "ratio": round(ratio, 4),
+                "pct": pct,
                 "detail": detail,
                 "error": self.error,
                 "path": self.path,
@@ -384,33 +425,25 @@ class HubJob:
     def _poll_disk(self, folder: Path) -> None:
         n = hub_downloaded_bytes(folder)
         with self.lock:
-            if self.total:
-                n = min(n, self.total)
+            if self.total and n > self.total:
+                self.total = n
             self.n = n
             total = self.total
             pct = int((n / total) * 100) if total else 0
             logs = self.logs
             last = self._logged_pct
             repo = self.repo
-        if logs is not None and pct >= last + 5:
+        if logs is not None and total and pct >= last + 5:
             with self.lock:
                 self._logged_pct = pct
             logs.append(repo.split("/")[-1], "hub", f"{pct}% · {human_bytes(n)} / {human_bytes(total)}")
+        elif logs is not None and not total and n and last < 0:
+            with self.lock:
+                self._logged_pct = 0
+            logs.append(repo.split("/")[-1], "hub", f"{human_bytes(n)} (size unknown)")
 
-    def start(self, repo: str, logs: Any | None = None) -> dict[str, Any]:
-        require_token()
-        repo = parse_repo(repo)
-        bits = _quant_bit_count({}, Path(repo), repo)
-        if bits is not None and bits not in MLX_QUANT_BITS:
-            raise ValueError(f"{repo} is {bits}-bit — mlx only loads 2/3/4/5/6/8")
+    def launch(self, repo: str, logs: Any | None = None) -> dict[str, Any]:
         with self.lock:
-            if self.phase in {"downloading", "paused"} and self.repo == repo:
-                if self.phase == "paused":
-                    self.phase = "downloading"
-                    _signal(self.proc, signal.SIGCONT)
-                return self.snapshot()
-            if self.phase in {"downloading", "paused"}:
-                raise RuntimeError(f"already downloading {self.repo}")
             self.repo = repo
             self.phase = "downloading"
             self.n = 0
@@ -420,10 +453,11 @@ class HubJob:
             self.logs = logs
             self.proc = None
             self._logged_pct = -1
+            self.finished_at = 0.0
             self.cancel.clear()
         if logs is not None:
             logs.append(repo.split("/")[-1], "hub", f"Downloading {repo} into Hugging Face cache…")
-        self.thread = threading.Thread(target=self._run, name="hf-download", daemon=True)
+        self.thread = threading.Thread(target=self._run, name=f"hf-download-{repo.split('/')[-1]}", daemon=True)
         self.thread.start()
         return self.snapshot()
 
@@ -451,6 +485,7 @@ class HubJob:
             proc = self.proc
             if self.phase in {"downloading", "paused"}:
                 self.phase = "cancelled"
+                self.finished_at = time.time()
         _kill_proc(proc)
         return self.snapshot()
 
@@ -495,6 +530,7 @@ class HubJob:
                 with self.lock:
                     self.path = path
                     self.phase = "done"
+                    self.finished_at = time.time()
                     if self.total:
                         self.n = self.total
                 if self.logs is not None:
@@ -504,12 +540,14 @@ class HubJob:
             with self.lock:
                 self.phase = "cancelled"
                 self.error = "cancelled"
+                self.finished_at = time.time()
             if self.logs is not None:
                 self.logs.append(repo.split("/")[-1], "hub", f"Cancelled {repo}")
         except Exception as extra:  # noqa: BLE001
             with self.lock:
                 self.phase = "error"
                 self.error = str(extra)
+                self.finished_at = time.time()
             if self.logs is not None:
                 self.logs.append(repo.split("/")[-1], "hub", f"Download failed: {extra}")
         finally:
@@ -517,38 +555,115 @@ class HubJob:
                 self.proc = None
 
 
-JOB = HubJob()
+class HubQueue:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.jobs: dict[str, HubJob] = {}
+
+    def is_active(self, path: Path) -> bool:
+        with self.lock:
+            jobs = list(self.jobs.values())
+        return any(job.is_active(path) for job in jobs)
+
+    def snapshots(self) -> list[dict[str, Any]]:
+        now = time.time()
+        with self.lock:
+            keep: dict[str, HubJob] = {}
+            rows: list[dict[str, Any]] = []
+            for repo, job in self.jobs.items():
+                snap = job.snapshot()
+                done = snap["phase"] not in {"downloading", "paused"}
+                if done and job.finished_at and now - job.finished_at > 45:
+                    continue
+                keep[repo] = job
+                rows.append(snap)
+            self.jobs = keep
+        return rows
+
+    def _get(self, repo: str | None) -> HubJob:
+        with self.lock:
+            if repo:
+                key = parse_repo(repo)
+                job = self.jobs.get(key)
+                if job is None:
+                    raise ValueError(f"no download for {key}")
+                return job
+            live = [j for j in self.jobs.values() if j.phase in {"downloading", "paused"}]
+            if len(live) == 1:
+                return live[0]
+            if not live:
+                raise ValueError("no active download")
+            raise ValueError("repo is required when several downloads are running")
+
+    def start(self, repo: str, logs: Any | None = None) -> dict[str, Any]:
+        require_token()
+        repo = parse_repo(repo)
+        bits = _quant_bit_count({}, Path(repo), repo)
+        if bits is not None and bits not in MLX_QUANT_BITS:
+            raise ValueError(f"{repo} is {bits}-bit — mlx only loads 2/3/4/5/6/8")
+        with self.lock:
+            existing = self.jobs.get(repo)
+            if existing is not None and existing.phase in {"downloading", "paused"}:
+                return existing.snapshot()
+            job = HubJob()
+            self.jobs[repo] = job
+        return job.launch(repo, logs=logs)
+
+    def pause(self, repo: str | None = None) -> dict[str, Any]:
+        return self._get(repo).request_pause()
+
+    def resume(self, repo: str | None = None) -> dict[str, Any]:
+        return self._get(repo).request_resume()
+
+    def cancel(self, repo: str | None = None) -> dict[str, Any]:
+        return self._get(repo).request_cancel()
+
+    def clear(self) -> None:
+        with self.lock:
+            jobs = list(self.jobs.values())
+            self.jobs = {}
+        for job in jobs:
+            job.cancel.set()
+            _kill_proc(job.proc)
+
+
+QUEUE = HubQueue()
 
 
 def start_download(raw: str, logs: Any | None = None) -> dict[str, Any]:
-    return JOB.start(raw, logs=logs)
+    return QUEUE.start(raw, logs=logs)
 
 
 def download_progress() -> dict[str, Any]:
-    return JOB.snapshot()
+    jobs = QUEUE.snapshots()
+    return {"token": token_set(), "jobs": jobs}
 
 
-def pause_download() -> dict[str, Any]:
-    return JOB.request_pause()
+def pause_download(repo: str | None = None) -> dict[str, Any]:
+    return QUEUE.pause(repo)
 
 
-def resume_download() -> dict[str, Any]:
-    return JOB.request_resume()
+def resume_download(repo: str | None = None) -> dict[str, Any]:
+    return QUEUE.resume(repo)
 
 
-def cancel_download() -> dict[str, Any]:
-    return JOB.request_cancel()
+def cancel_download(repo: str | None = None) -> dict[str, Any]:
+    return QUEUE.cancel(repo)
 
 
 def download_repo(raw: str, logs: Any | None = None, timeout: float = 3600.0) -> dict[str, Any]:
     """Blocking helper for tests / CLI. Studio uses start_download + poll."""
     snap = start_download(raw, logs=logs)
+    repo = str(snap.get("repo") or "")
     deadline = time.time() + timeout
     while time.time() < deadline:
-        snap = download_progress()
-        if snap["phase"] in {"done", "error", "cancelled"}:
+        jobs = download_progress().get("jobs") or []
+        match = next((row for row in jobs if row.get("repo") == repo), snap)
+        if match.get("phase") in {"done", "error", "cancelled"}:
+            snap = match
             break
         time.sleep(0.05)
-    if snap["phase"] == "done":
+    if snap.get("phase") == "done":
         return {"ok": True, "repo": snap["repo"], "path": snap["path"], "token": token_set()}
-    raise RuntimeError(snap.get("error") or f"download {snap['phase']}")
+    raise RuntimeError(snap.get("error") or f"download {snap.get('phase')}")
+

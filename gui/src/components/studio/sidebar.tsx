@@ -457,10 +457,11 @@ function HubPanel() {
   const [results, setResults] = useState<HubQuant[]>([]);
   const [picked, setPicked] = useState("");
   const [busy, setBusy] = useState<"search" | null>(null);
-  const [job, setJob] = useState<HubProgress | null>(null);
+  const [jobs, setJobs] = useState<HubProgress[]>([]);
+  const seenDone = useRef(new Set<string>());
 
-  const downloading = job?.phase === "downloading" || job?.phase === "paused";
-  const fill = Math.max(0, Math.min(1, job?.ratio ?? 0));
+  const active = jobs.filter((j) => j.phase === "downloading" || j.phase === "paused");
+  const pickedBusy = active.some((j) => j.repo === picked);
   const locked = !token;
 
   useEffect(() => {
@@ -473,21 +474,26 @@ function HubPanel() {
   }, []);
 
   useEffect(() => {
-    if (!downloading) return;
     let stop = false;
     const tick = async () => {
       try {
         const snap = await getHubProgress();
         if (stop) return;
-        setJob(snap);
-        if (snap.phase === "done") {
-          toast.success(`Downloaded ${snap.repo}`);
-          if (!watchDirs.includes(HF_HUB_WATCH)) await addWatchDir(HF_HUB_WATCH);
-          else await scanWatchDirs();
-        } else if (snap.phase === "error") {
-          toast.error(snap.error || "Download failed");
-        } else if (snap.phase === "cancelled") {
-          toast.message("Download cancelled");
+        setJobs(snap.jobs);
+        for (const job of snap.jobs) {
+          const key = `${job.repo}:${job.phase}`;
+          if (job.phase === "done" && !seenDone.current.has(job.repo)) {
+            seenDone.current.add(job.repo);
+            toast.success(`Downloaded ${job.repo}`);
+            if (!watchDirs.includes(HF_HUB_WATCH)) await addWatchDir(HF_HUB_WATCH);
+            else await scanWatchDirs();
+          } else if (job.phase === "error" && !seenDone.current.has(key)) {
+            seenDone.current.add(key);
+            toast.error(job.error || "Download failed");
+          } else if (job.phase === "cancelled" && !seenDone.current.has(key)) {
+            seenDone.current.add(key);
+            toast.message("Download cancelled");
+          }
         }
       } catch {
         /* keep last snapshot */
@@ -499,7 +505,7 @@ function HubPanel() {
       stop = true;
       window.clearInterval(id);
     };
-  }, [downloading, addWatchDir, scanWatchDirs, watchDirs]);
+  }, [addWatchDir, scanWatchDirs, watchDirs]);
 
   async function lookup(e?: FormEvent) {
     e?.preventDefault();
@@ -521,10 +527,14 @@ function HubPanel() {
   }
 
   async function download() {
-    if (!picked || locked || downloading) return;
+    if (!picked || locked || pickedBusy) return;
     try {
+      seenDone.current.delete(picked);
       const snap = await postHubDownload(picked);
-      setJob(snap);
+      setJobs((prev) => {
+        const rest = prev.filter((j) => j.repo !== snap.repo);
+        return [...rest, snap];
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Download failed");
     }
@@ -564,7 +574,7 @@ function HubPanel() {
                 size="icon-sm"
                 className="size-9"
                 aria-label="Find MLX quants"
-                disabled={locked || !draft.trim() || busy !== null || downloading}
+                disabled={locked || !draft.trim() || busy !== null}
               >
                 <Search className={cn(busy === "search" && "animate-spin")} />
               </Button>
@@ -580,7 +590,7 @@ function HubPanel() {
             value={picked}
             onChange={(e) => setPicked(e.target.value)}
             aria-label="MLX quant"
-            disabled={locked || downloading}
+            disabled={locked}
           >
             {results.map((row) => (
               <option key={row.id} value={row.id}>
@@ -588,52 +598,32 @@ function HubPanel() {
               </option>
             ))}
           </select>
-          <div className="relative flex overflow-hidden rounded-lg border border-border">
-            <button
-              type="button"
-              disabled={locked || !picked || downloading}
-              onClick={() => void download()}
-              className="relative flex min-h-9 min-w-0 flex-1 items-center justify-center px-3 text-xs font-medium"
-            >
-              {downloading ? (
-                <span
-                  className="load-fill"
-                  style={{ "--load-pct": String(fill) } as CSSProperties}
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={Math.round(fill * 100)}
-                />
-              ) : null}
-              <span className="relative z-[1] truncate px-1">
-                {job?.phase === "paused"
-                  ? `Paused ${Math.round(fill * 100)}%${job.detail ? ` · ${job.detail}` : ""}`
-                  : downloading
-                    ? `Downloading ${Math.round(fill * 100)}%${job?.detail ? ` · ${job.detail}` : ""}`
-                    : "Download"}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="block">
+                <button
+                  type="button"
+                  disabled={locked || !picked || pickedBusy}
+                  onClick={() => void download()}
+                  className="flex min-h-9 w-full items-center justify-center rounded-lg border border-border px-3 text-xs font-medium disabled:opacity-40"
+                >
+                  Download
+                </button>
               </span>
-            </button>
-            {downloading ? (
-              <>
-                <button
-                  type="button"
-                  className="relative z-[1] flex w-9 shrink-0 items-center justify-center border-l border-border bg-secondary hover:bg-accent"
-                  aria-label={job?.phase === "paused" ? "Resume download" : "Pause download"}
-                  onClick={() => void (job?.phase === "paused" ? postHubResume() : postHubPause()).then(setJob)}
-                >
-                  {job?.phase === "paused" ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-                </button>
-                <button
-                  type="button"
-                  className="relative z-[1] flex w-9 shrink-0 items-center justify-center border-l border-border bg-destructive text-primary-foreground hover:opacity-90"
-                  aria-label="Cancel download"
-                  onClick={() => void postHubCancel().then(setJob)}
-                >
-                  <Square className="size-3.5" />
-                </button>
-              </>
+            </TooltipTrigger>
+            {pickedBusy ? (
+              <TooltipContent>Already downloading this quant</TooltipContent>
             ) : null}
-          </div>
+          </Tooltip>
+          {active.map((job) => (
+            <DownloadBubble
+              key={job.repo}
+              job={job}
+              onPause={() => void postHubPause(job.repo)}
+              onResume={() => void postHubResume(job.repo)}
+              onCancel={() => void postHubCancel(job.repo)}
+            />
+          ))}
         </div>
       ) : (
         <p className="px-4 pb-3 pt-2 text-[11px] text-muted-foreground">
@@ -656,6 +646,65 @@ function HubPanel() {
         </p>
       )}
     </Section>
+  );
+}
+
+function hubPctLabel(job: HubProgress): string {
+  if (job.pct == null || !job.total) return "";
+  if (job.pct < 1) return `${job.pct.toFixed(1)}%`;
+  return `${Math.round(job.pct)}%`;
+}
+
+function DownloadBubble({
+  job,
+  onPause,
+  onResume,
+  onCancel,
+}: {
+  job: HubProgress;
+  onPause: () => void;
+  onResume: () => void;
+  onCancel: () => void;
+}) {
+  const fill = Math.max(0, Math.min(1, job.ratio ?? 0));
+  const pct = hubPctLabel(job);
+  const label = [job.phase === "paused" ? "Paused" : job.name || job.repo, pct, job.detail]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="relative flex min-h-9 overflow-hidden rounded-lg border border-border">
+      <div className="relative flex min-w-0 flex-1 items-center px-3 text-xs font-medium">
+        {job.total ? (
+          <span
+            className="load-fill"
+            style={{ "--load-pct": String(fill) } as CSSProperties}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(fill * 100)}
+          />
+        ) : (
+          <span className="load-fill animate-pulse" style={{ "--load-pct": "0.15" } as CSSProperties} />
+        )}
+        <span className="relative z-[1] truncate px-1">{label}</span>
+      </div>
+      <button
+        type="button"
+        className="relative z-[1] flex w-9 shrink-0 items-center justify-center border-l border-border bg-secondary hover:bg-accent"
+        aria-label={job.phase === "paused" ? "Resume download" : "Pause download"}
+        onClick={job.phase === "paused" ? onResume : onPause}
+      >
+        {job.phase === "paused" ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+      </button>
+      <button
+        type="button"
+        className="relative z-[1] flex w-9 shrink-0 items-center justify-center border-l border-border bg-destructive text-primary-foreground hover:opacity-90"
+        aria-label="Cancel download"
+        onClick={onCancel}
+      >
+        <Square className="size-3.5" />
+      </button>
+    </div>
   );
 }
 
