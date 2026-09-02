@@ -80,10 +80,11 @@ basename (any case), `org/name`, or the path.
   Hugging Face hub layout (`models--org--name/snapshots/…`) is understood, so
   `~/.cache/huggingface/hub` works as a watch dir. Snapshot files are often
   symlinks into `blobs/`; scan follows those and also `.pth` / `.bin` / nested
-  diffusers weights (`model_index.json`). A snapshot still needs `config.json`
-  or `model_index.json` — original PyTorch dumps (hexgrad/Kokoro, ResembleAI/chatterbox)
-  are skipped; mlx-community conversions are kept. `datasets--` / `spaces--` /
-  `blobs` / `refs` are skipped.
+  diffusers weights (`model_index.json`). A snapshot still needs a typed config
+  (`model_type`, `architectures`, or `_class_name`). hexgrad/Kokoro's
+  `config.json` is an istftnet dump with none of those — skipped.
+  mlx-community conversions are kept. `datasets--` / `spaces--` / `blobs` /
+  `refs` are skipped.
 - `GET /health` — `{status, models, host, port, bind, url}`
 
 ## Progress

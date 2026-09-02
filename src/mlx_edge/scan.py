@@ -277,11 +277,27 @@ def _has_chat_template(path: Path) -> bool:
 def _is_model_dir(path: Path) -> bool:
     if path.name in HUB_INTERNALS:
         return False
-    # Hub snapshots without config.json are original PyTorch dumps
-    # (hexgrad/Kokoro-82M, ResembleAI/chatterbox). mlx-* need a typed config.
     if not any((path / name).is_file() for name in CONFIG_NAMES):
         return False
+    # hexgrad/Kokoro-82M ships config.json (istftnet/plbert/vocab) with no
+    # model_type. mlx-audio then uses the path basename — a snapshot SHA —
+    # and raises "Could not determine model type".
+    if not _config_is_typed(_read_model_config(path)):
+        return False
     return _has_weights(path)
+
+
+def _config_is_typed(cfg: dict[str, Any]) -> bool:
+    if cfg.get("model_type") or cfg.get("architecture") or cfg.get("_class_name"):
+        return True
+    arch = cfg.get("architectures")
+    if isinstance(arch, list) and arch:
+        return True
+    if isinstance(arch, str) and arch.strip():
+        return True
+    if cfg.get("quantization") or cfg.get("quantization_config"):
+        return True
+    return False
 
 
 def _has_weights(path: Path, depth: int = 0) -> bool:

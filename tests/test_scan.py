@@ -213,6 +213,22 @@ class ScanTests(unittest.TestCase):
             (hub / "refs").mkdir()
             self.assertEqual(list_models(str(root)), [])
 
+    def test_hub_kokoro_config_without_model_type_is_skipped(self):
+        """hexgrad Kokoro ships istftnet/plbert config — mlx-audio cannot type it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hub = root / "models--hexgrad--Kokoro-82M"
+            snap = hub / "snapshots" / "f3ff3571"
+            snap.mkdir(parents=True)
+            (snap / "config.json").write_text(
+                json.dumps({"istftnet": {"upsample_rates": [10, 6]}, "hidden_dim": 512, "vocab": {"a": 43}}),
+                encoding="utf-8",
+            )
+            (snap / "kokoro-v1_0.pth").write_bytes(b"w" * 64)
+            (hub / "blobs").mkdir()
+            (hub / "refs").mkdir()
+            self.assertEqual(list_models(str(root)), [])
+
     def test_hub_diffusers_model_index(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
