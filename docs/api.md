@@ -51,6 +51,10 @@ basename (any case), `org/name`, or the path.
   checkpoint → Hugging Face → Harmony preset for gpt-oss / ConfigI).
 - `GET`/`PUT /v1/prefs` — watch dirs and per-model flags
   (`~/.config/mlx-edge/studio.json`)
+- `GET`/`PUT`/`DELETE /v1/playground` — Playground transcript for `?model=`
+  (RAM only — a browser reload keeps it, quitting Edge drops it). `PUT`
+  `{model, turns}`. `DELETE` / `POST /v1/playground/clear` empties that model
+  (omit `model` to drop every transcript).
 - `POST /v1/completions` — routed by `model`
 - `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id).
   `engine` is `lm` | `vlm` | `embed`. After the child is healthy, Edge sends a

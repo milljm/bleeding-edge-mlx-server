@@ -1,14 +1,26 @@
 import { type UIEvent, useEffect, useRef, useState } from "react";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, Square, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Markdown } from "@/components/studio/markdown";
-import { deltaContent, deltaReasoning, getProgress, modelIsBusy, modelIsLive, postStop, type ModelProgress } from "@/lib/edge-api";
+import {
+  clearPlayground,
+  deltaContent,
+  deltaReasoning,
+  getPlayground,
+  getProgress,
+  modelIsBusy,
+  modelIsLive,
+  postStop,
+  putPlayground,
+  type ModelProgress,
+  type PlaygroundTurn,
+} from "@/lib/edge-api";
 import { loadTarget, publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
-type ChatTurn = { role: "user" | "assistant"; text: string; thinking?: string };
+type ChatTurn = PlaygroundTurn;
 
 
 export function Playground() {
@@ -161,8 +173,39 @@ function ChatPlayground({ live }: { live: boolean }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
   const programmaticRef = useRef(false);
+  const readyRef = useRef(false);
+  const key = model ? publicName(model) : "";
   const remoteBusy = modelIsBusy(progressSnap, model);
   const stopping = busy || remoteBusy;
+
+  useEffect(() => {
+    readyRef.current = false;
+    let cancelled = false;
+    if (!key) {
+      setTurns([]);
+      return;
+    }
+    void getPlayground(key)
+      .then((loaded) => {
+        if (cancelled) return;
+        setTurns(loaded);
+        readyRef.current = true;
+      })
+      .catch(() => {
+        if (!cancelled) readyRef.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [key]);
+
+  useEffect(() => {
+    if (!readyRef.current || !key) return;
+    const handle = window.setTimeout(() => {
+      void putPlayground(key, turns);
+    }, 250);
+    return () => window.clearTimeout(handle);
+  }, [turns, key]);
 
   function follow() {
     const el = scrollerRef.current;
@@ -213,6 +256,23 @@ function ChatPlayground({ live }: { live: boolean }) {
         await postStop(loadTarget(model));
       } catch {
         /* already gone */
+      }
+    }
+  }
+
+  async function rewind(index: number) {
+    if (stopping) await halt();
+    setTurns((prev) => prev.slice(0, index));
+  }
+
+  async function reset() {
+    if (stopping) await halt();
+    setTurns([]);
+    if (key) {
+      try {
+        await clearPlayground(key);
+      } catch {
+        /* RAM miss is fine */
       }
     }
   }
@@ -298,7 +358,7 @@ function ChatPlayground({ live }: { live: boolean }) {
     }
   }
 
-  if (!live) {
+  if (!live && turns.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-start justify-center">
         <p className="max-w-md text-sm text-muted-foreground">
@@ -315,6 +375,20 @@ function ChatPlayground({ live }: { live: boolean }) {
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">
+      <div className="mb-2 flex items-center justify-end">
+        {turns.length ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => void reset()}
+            aria-label="Clear conversation"
+          >
+            <Trash2 className="size-3.5" />
+            Clear
+          </Button>
+        ) : null}
+      </div>
       <div
         ref={scrollerRef}
         onScroll={onScroll}
@@ -329,12 +403,21 @@ function ChatPlayground({ live }: { live: boolean }) {
             <article
               key={`${turn.role}-${i}`}
               className={cn(
-                "rounded-2xl px-4 py-3 text-sm",
+                "group relative rounded-2xl px-4 py-3 pr-10 text-sm",
                 turn.role === "user"
                   ? "ml-auto max-w-[85%] bg-secondary text-foreground"
                   : "mr-auto w-full max-w-full bg-card shadow-[var(--shadow-border)]",
               )}
             >
+              <button
+                type="button"
+                className="absolute top-2 right-2 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
+                aria-label="Delete this message and everything after"
+                title="Delete from here"
+                onClick={() => void rewind(i)}
+              >
+                <X className="size-3.5" />
+              </button>
               <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
                 {turn.role === "assistant" && turn.thinking && !turn.text ? "thinking" : turn.role}
               </p>
@@ -367,6 +450,9 @@ function ChatPlayground({ live }: { live: boolean }) {
           ))
         )}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {!live ? (
+          <p className="text-xs text-muted-foreground">Serve this model to keep chatting. Transcript stays until Edge exits.</p>
+        ) : null}
       </div>
       <form
         className="mt-4 flex items-end gap-2 rounded-2xl border border-border bg-card p-2 shadow-[var(--shadow-border)]"
@@ -392,7 +478,7 @@ function ChatPlayground({ live }: { live: boolean }) {
             <Square />
           </Button>
         ) : (
-          <Button type="submit" size="icon" className="size-11 shrink-0" disabled={!input.trim()} aria-label="Send">
+          <Button type="submit" size="icon" className="size-11 shrink-0" disabled={!live || !input.trim()} aria-label="Send">
             <ArrowUp />
           </Button>
         )}

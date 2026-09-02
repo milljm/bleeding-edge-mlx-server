@@ -230,6 +230,28 @@ class GatewayTests(unittest.TestCase):
                 status, body = self._json("GET", "/v1/prefs")
                 self.assertEqual(body["flagsByModel"]["MiniMax"]["temp"], 0.4)
 
+    def test_playground_ram_roundtrip(self):
+        status, body = self._json(
+            "PUT",
+            "/v1/playground",
+            {
+                "model": "MiniMax-M2.7-ConfigI-MLX",
+                "turns": [
+                    {"role": "user", "text": "hi"},
+                    {"role": "assistant", "text": "hello", "thinking": "plan"},
+                ],
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body.get("turns") or []), 2)
+        status, body = self._json("GET", "/v1/playground?model=minimax-m2.7-configi-mlx")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["turns"][1]["thinking"], "plan")
+        status, body = self._json("DELETE", "/v1/playground?model=MiniMax-M2.7-ConfigI-MLX")
+        self.assertEqual(status, 200)
+        status, body = self._json("GET", "/v1/playground?model=MiniMax-M2.7-ConfigI-MLX")
+        self.assertEqual(body.get("turns"), [])
+
     def test_chat_resolves_basename_case_insensitive(self):
         from http.server import BaseHTTPRequestHandler
 
