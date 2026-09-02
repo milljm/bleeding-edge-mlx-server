@@ -1,5 +1,6 @@
 import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronRight, Folder, PanelLeft, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronRight, Folder, PanelLeft, Play, Plus, RefreshCw, Search, Square, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,8 @@ export function Sidebar({
   const removeWatchDir = useStudio((s) => s.removeWatchDir);
   const setDirDraft = useStudio((s) => s.setDirDraft);
   const selectModel = useStudio((s) => s.selectModel);
+  const startServe = useStudio((s) => s.startServe);
+  const stopServe = useStudio((s) => s.stopServe);
   const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
   const [query, setQuery] = useState("");
 
@@ -172,6 +175,14 @@ export function Sidebar({
                     selectModel(model.id);
                     onNavigate?.();
                   }}
+                  onToggle={async () => {
+                    try {
+                      if (modelIsLive(served, model)) await stopServe(model.id);
+                      else await startServe(model.id);
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Serve failed");
+                    }
+                  }}
                 />
               ))}
             </ul>
@@ -278,6 +289,7 @@ function ModelCard({
   busy,
   progress,
   onSelect,
+  onToggle,
 }: {
   model: ModelRec;
   active: boolean;
@@ -287,6 +299,7 @@ function ModelCard({
   busy: boolean;
   progress: ProgressSnapshot | null;
   onSelect: () => void;
+  onToggle: () => void | Promise<void>;
 }) {
   const reported = modelLoadProgress(progress, model);
   const fill = useLoadFill(loading, reported);
@@ -296,20 +309,15 @@ function ModelCard({
 
   return (
     <li className="relative overflow-visible">
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-busy={loading || busy || undefined}
+      <div
         className={cn(
-          "relative flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ring-inset transition-colors duration-150",
-          tinted && "bg-live/20 text-foreground hover:bg-live/30",
-          error && !tinted && !loading && "bg-destructive/40 text-foreground hover:bg-destructive/50 ring-1 ring-destructive/60",
-          !tinted && !error && !loading && "hover:bg-accent",
+          "relative flex w-full items-start gap-1 rounded-lg ring-inset transition-colors duration-150",
+          tinted && "bg-live/20 text-foreground",
+          error && !tinted && !loading && "bg-destructive/40 text-foreground ring-1 ring-destructive/60",
           loading && "text-foreground",
           active && "ring-2 ring-primary",
         )}
       >
-        <TokenBubble tokens={gen.tokens} generating={gen.generating} />
         {loading ? (
           <span
             className="load-fill"
@@ -321,35 +329,63 @@ function ModelCard({
             aria-valuenow={Math.round(fill * 100)}
           />
         ) : null}
-        <span
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-busy={loading || busy || undefined}
           className={cn(
-            "relative mt-1.5 size-1.5 shrink-0 rounded-full",
-            busy
-              ? "busy-dot"
-              : loading
-                ? "animate-pulse bg-live"
-                : live
-                  ? "bg-live"
-                  : error
-                    ? "bg-destructive"
-                    : "bg-border",
+            "relative flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-2 text-left",
+            tinted && "hover:bg-live/10",
+            error && !tinted && !loading && "hover:bg-destructive/20",
+            !tinted && !error && !loading && "hover:bg-accent",
           )}
-          title={busy ? "generating" : loading ? "loading" : live ? "loaded" : error ? "failed" : undefined}
-        />
-        <span className="relative min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">{model.name}</span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
-            <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "embed" ? "accent" : "default"}>
-              {model.engine}
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              {busy ? "generating · " : loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}
-              {model.quant} · {model.size}
-              {context ? ` · ${context}` : ""}
+        >
+          <TokenBubble tokens={gen.tokens} generating={gen.generating} />
+          <span
+            className={cn(
+              "relative mt-1.5 size-1.5 shrink-0 rounded-full",
+              busy
+                ? "busy-dot"
+                : loading
+                  ? "animate-pulse bg-live"
+                  : live
+                    ? "bg-live"
+                    : error
+                      ? "bg-destructive"
+                      : "bg-border",
+            )}
+            title={busy ? "generating" : loading ? "loading" : live ? "loaded" : error ? "failed" : undefined}
+          />
+          <span className="relative min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">{model.name}</span>
+            <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
+              <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "embed" ? "accent" : "default"}>
+                {model.engine}
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                {busy ? "generating · " : loading ? "loading · " : live ? "loaded · " : error ? "failed · " : ""}
+                {model.quant} · {model.size}
+                {context ? ` · ${context}` : ""}
+              </span>
             </span>
           </span>
-        </span>
-      </button>
+        </button>
+        <Button
+          type="button"
+          variant={live ? "destructive" : "secondary"}
+          size="icon-sm"
+          className="relative z-[1] mt-1 mr-1 shrink-0"
+          disabled={loading}
+          aria-label={live ? `Unload ${model.name}` : `Serve ${model.name}`}
+          onClick={() => void onToggle()}
+        >
+          {live ? (
+            <Square className="size-3.5" />
+          ) : (
+            <Play className={cn("size-3.5", loading && "animate-pulse")} />
+          )}
+        </Button>
+      </div>
     </li>
   );
 }

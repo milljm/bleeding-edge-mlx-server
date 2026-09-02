@@ -145,10 +145,9 @@ function EngineCard() {
         <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Engine</h3>
         <p className="mt-1 max-w-lg text-sm text-muted-foreground">
           Scan guessed {engineLabel(detected)} from the checkpoint. Force mlx-lm when a model looks
-          multimodal but the working loader is a patched mlx-lm — MiniMax-M3-ConfigI is{" "}
-          <span className="font-mono text-foreground">minimax_m3_vl</span> with a vision tower mlx-lm
-          ignores. Overlay that class with <span className="font-mono text-foreground">mlx-edge build --help</span>.
-          {live ? " Reload after changing a loaded model." : " Serve after you pick."}
+          multimodal but the working loader is a patched mlx-lm. Overlay that class with{" "}
+          <span className="font-mono text-foreground">mlx-edge build --help</span>.
+          {live ? " Reload after changing a loaded model." : " Serve from the model card."}
         </p>
       </div>
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Engine">

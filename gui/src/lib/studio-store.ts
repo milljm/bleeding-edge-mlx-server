@@ -56,8 +56,8 @@ type StudioState = {
   }) => void;
   persistPrefs: () => Promise<void>;
   scanWatchDirs: () => Promise<void>;
-  startServe: () => Promise<void>;
-  stopServe: () => Promise<void>;
+  startServe: (id?: string) => Promise<void>;
+  stopServe: (id?: string) => Promise<void>;
   reloadServe: () => Promise<void>;
   syncServed: () => Promise<void>;
   selected: () => ModelRec | undefined;
@@ -150,7 +150,7 @@ export const useStudio = create<StudioState>()(
       selectModel: (id) => {
         const model = get().models.find((m) => m.id === id);
         const flags = flagsForModel(model, model ? get().flagsByModel[flagKey(model)] : undefined);
-        set({ selectedId: id, flags, tab: "settings" });
+        set({ selectedId: id, flags });
       },
       setFlag: (key, value) => {
         const model = get().selected();
@@ -238,11 +238,14 @@ export const useStudio = create<StudioState>()(
           });
         }
       },
-      startServe: async () => {
-        const model = get().selected();
+      startServe: async (id) => {
+        const model = id ? get().models.find((m) => m.id === id) : get().selected();
         if (!model) return;
         if (get().loadingIds.includes(model.id)) return;
-        const flags = get().flags;
+        const flags =
+          !id || id === get().selectedId
+            ? get().flags
+            : flagsForModel(model, get().flagsByModel[flagKey(model)]);
         const failed = { ...get().failed };
         delete failed[model.id];
         // Pin every in-flight load, not just the latest click. Finishing a
@@ -278,8 +281,8 @@ export const useStudio = create<StudioState>()(
           throw err;
         }
       },
-      stopServe: async () => {
-        const model = get().selected();
+      stopServe: async (id) => {
+        const model = id ? get().models.find((m) => m.id === id) : get().selected();
         if (!model) return;
         await postUnload(loadTarget(model));
         const gateway = (await getHealth()).gateway;
