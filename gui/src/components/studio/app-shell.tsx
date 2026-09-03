@@ -18,9 +18,9 @@ import { loadTarget, modelCardLink } from "@/lib/models";
 import { useStudio, type StudioTab } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
-const SIDEBAR_MIN = 280;
-const SIDEBAR_MAX = 480;
-const SIDEBAR_DEFAULT = 320;
+const SIDEBAR_MIN = 480;
+const SIDEBAR_MAX = 760;
+const SIDEBAR_DEFAULT = 480;
 
 export function AppShell() {
   useRehydrateStudio();

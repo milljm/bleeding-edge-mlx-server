@@ -44,6 +44,14 @@ class ScanTests(unittest.TestCase):
             self.assertEqual(repos["mlx-community/Qwen3-8B-4bit"]["source"], "scan")
             self.assertTrue(repos["mlx-community/Qwen3-8B-4bit"]["path"].endswith("Qwen3-8B-4bit"))
             self.assertEqual(repos["mlx-community/Qwen3-8B-4bit"]["id"], "lm-mlx-community-qwen3-8b-4bit")
+            self.assertEqual(
+                repos["mlx-community/Qwen3-8B-4bit"]["features"],
+                {"tool": True, "vision": False, "reason": True},
+            )
+            self.assertEqual(
+                repos["mlx-community/Qwen2.5-VL-7B-Instruct-4bit"]["features"],
+                {"tool": True, "vision": True, "reason": False},
+            )
 
     def test_skips_1bit_quant(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -71,6 +79,10 @@ class ScanTests(unittest.TestCase):
             _write_model(root / "mlx-community" / "Qwen3-8B-4bit")
             models = {m["repo"]: m for m in list_models(str(root))}
             self.assertEqual(models["mlx-community/Qwen3-Embedding-0.6B-4bit"]["engine"], "embed")
+            self.assertEqual(
+                models["mlx-community/Qwen3-Embedding-0.6B-4bit"]["features"],
+                {"tool": False, "vision": False, "reason": False},
+            )
             self.assertEqual(models["BAAI/bge-small-en-v1.5-mlx"]["engine"], "embed")
             self.assertEqual(models["mlx-community/Qwen3-8B-4bit"]["engine"], "lm")
 
@@ -293,6 +305,41 @@ class ScanTests(unittest.TestCase):
             (hub / "refs").mkdir()
             models = list_models(str(root))
             self.assertEqual(models, [])
+
+    def test_features_from_template_and_thinking_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            tools = root / "acme" / "TinyChat-4bit"
+            tools.mkdir(parents=True)
+            (tools / "config.json").write_text(
+                json.dumps({"model_type": "olmo", "quantization": {"bits": 4}}),
+                encoding="utf-8",
+            )
+            (tools / "model.safetensors").write_bytes(b"w" * 64)
+            (tools / "tokenizer_config.json").write_text(
+                json.dumps({"chat_template": "{{ tools }} <tool_call>"}),
+                encoding="utf-8",
+            )
+            think = root / "acme" / "Mystery-4bit"
+            _write_model(think)
+            (think / "config.json").write_text(
+                json.dumps({
+                    "model_type": "llama",
+                    "enable_thinking": True,
+                    "quantization": {"bits": 4},
+                }),
+                encoding="utf-8",
+            )
+            (think / "model.safetensors").write_bytes(b"w" * 64)
+            models = {m["repo"]: m for m in list_models(str(root))}
+            self.assertEqual(
+                models["acme/TinyChat-4bit"]["features"],
+                {"tool": True, "vision": False, "reason": False},
+            )
+            self.assertEqual(
+                models["acme/Mystery-4bit"]["features"],
+                {"tool": True, "vision": False, "reason": True},
+            )
 
     def test_hub_skips_datasets_and_spaces(self):
         with tempfile.TemporaryDirectory() as tmp:
