@@ -14,6 +14,11 @@ export type ModelRec = {
   watchDir: string;
   source: "scan" | "manual";
   hasChatTemplate?: boolean;
+  features?: {
+    tool?: boolean;
+    vision?: boolean;
+    reason?: boolean;
+  };
 };
 
 /** Common watch path (LM Studio). Kept as-is — never treated as a wipe sentinel. */

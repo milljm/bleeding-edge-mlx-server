@@ -309,6 +309,21 @@ function TokenBubble({ tokens, generating }: { tokens: number; generating: boole
   );
 }
 
+function FeatureChips({ features }: { features?: ModelRec["features"] }) {
+  if (!features) return null;
+  const shown = (["tool", "vision", "reason"] as const).filter((key) => features[key]);
+  if (!shown.length) return null;
+  return (
+    <>
+      {shown.map((key) => (
+        <Badge key={key} className="px-1.5 py-0 text-[10px] tracking-wide">
+          {key}
+        </Badge>
+      ))}
+    </>
+  );
+}
+
 function ModelCard({
   model,
   active,
@@ -409,6 +424,7 @@ function ModelCard({
               <Badge variant={model.engine === "vlm" ? "warn" : model.engine === "lm" ? "default" : "accent"}>
                 {model.engine}
               </Badge>
+              <FeatureChips features={model.features} />
               <span className="text-xs text-muted-foreground">
                 {status ? `${status} · ` : ""}
                 {model.quant} · {model.size}

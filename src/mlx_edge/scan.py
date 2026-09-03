@@ -278,6 +278,7 @@ def _describe(
         "watchDir": typed_dir,
         "source": "scan",
         "hasChatTemplate": _has_chat_template(path),
+        "features": _infer_features(cfg, path, engine, repo),
     }
 
 
@@ -291,6 +292,67 @@ def _has_chat_template(path: Path) -> bool:
     if isinstance(tmpl, list) and tmpl:
         return True
     return False
+
+
+TOOL_NAME_MARKERS = (
+    "qwen", "llama", "mistral", "minimax", "gpt_oss", "gpt-oss", "glm",
+    "gemma", "deepseek", "kimi", "internlm", "phi4", "phi_4", "command_r",
+    "hermes", "functionary", "toolace",
+)
+TOOL_TEXT_MARKERS = (
+    "tool_call", "tools", "function_call", "minimax:tool", "<|channel|>",
+    "harmony",
+)
+REASON_NAME_MARKERS = (
+    "qwen3", "qwq", "gpt_oss", "gpt-oss", "configi", "minimax",
+    "deepseek_r1", "deepseek-r1", "r1_distill", "r1-distill",
+    "glm5", "glm_5", "glm4_5", "glm-4.5",
+)
+REASON_TEXT_MARKERS = (
+    "<think>", "</think>", "enable_thinking", "reasoning_content",
+    "<|channel|>",
+)
+
+
+def _chat_template_text(path: Path) -> str:
+    jinja = path / "chat_template.jinja"
+    if jinja.is_file():
+        try:
+            return jinja.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            pass
+    cfg = _read_config(path / "tokenizer_config.json")
+    tmpl = cfg.get("chat_template")
+    if isinstance(tmpl, str):
+        return tmpl
+    if isinstance(tmpl, list):
+        return " ".join(str(part) for part in tmpl)
+    return ""
+
+
+def _infer_features(
+    cfg: dict[str, Any], path: Path, engine: str, repo: str,
+) -> dict[str, bool]:
+    """Cheap guesses for sidebar chips: tool / vision / reason."""
+    if engine not in {"lm", "vlm"}:
+        return {"tool": False, "vision": False, "reason": False}
+    vision = engine == "vlm" or bool(
+        cfg.get("vision_config") or cfg.get("image_config")
+    )
+    blob = " ".join(
+        [repo, path.name, str(cfg.get("model_type") or ""), engine]
+    ).lower().replace("-", "_")
+    tmpl = _chat_template_text(path).lower()
+    hay = f"{blob} {tmpl}"
+    tool = any(marker in blob for marker in TOOL_NAME_MARKERS) or any(
+        marker in hay for marker in TOOL_TEXT_MARKERS
+    )
+    reason = any(marker in blob for marker in REASON_NAME_MARKERS) or any(
+        marker in hay for marker in REASON_TEXT_MARKERS
+    )
+    if cfg.get("enable_thinking") or cfg.get("thinking") or cfg.get("reasoning_config"):
+        reason = True
+    return {"tool": bool(tool), "vision": bool(vision), "reason": bool(reason)}
 
 
 def _is_model_dir(path: Path) -> bool:
