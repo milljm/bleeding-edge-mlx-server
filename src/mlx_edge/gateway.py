@@ -7,6 +7,7 @@ import json
 import re
 import select
 import socket
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -53,6 +54,12 @@ STATIC_TYPES = {
 
 # GUI progress/log polls drown the log. Real POST /v1/chat stays visible.
 _QUIET_ACCESS = re.compile(r"\b(?:GET|HEAD) /v1/(?:progress|logs|hub/progress)(?:/|\?|\s)", re.I)
+
+# Cline / OpenAI SDKs time out on the gap between `data:` events. mlx-lm only
+# sends SSE comments (`: keepalive N/M`) during prefill, and nothing at all
+# while a request is queued or waiting to decode. 2s empty deltas keep the
+# client socket alive without looking like tokens.
+HEARTBEAT_INTERVAL = 2.0
 
 
 def _quiet_access(line: str) -> bool:
@@ -895,6 +902,81 @@ def _client_gone(handler: BaseHTTPRequestHandler) -> bool:
         return True
 
 
+def _sse_role_chunk(model: str) -> bytes:
+    payload = {
+        "id": "chatcmpl-edge",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+    }
+    return f"data: {json.dumps(payload)}\n\n".encode("utf-8")
+
+
+def _sse_heartbeat() -> bytes:
+    payload = {
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": None}],
+    }
+    return b": heartbeat\n\n" + f"data: {json.dumps(payload)}\n\n".encode("utf-8")
+
+
+def _open_sse(handler: BaseHTTPRequestHandler, model: str) -> None:
+    handler.send_response(200)
+    for key, value in CORS.items():
+        handler.send_header(key, value)
+    handler.send_header("Content-Type", "text/event-stream")
+    handler.send_header("Cache-Control", "no-cache")
+    handler.send_header("Connection", "close")
+    handler.send_header("X-Accel-Buffering", "no")
+    handler.end_headers()
+    handler.wfile.write(_sse_role_chunk(model))
+    handler.wfile.flush()
+
+
+def _write_heartbeat(handler: BaseHTTPRequestHandler, lock: threading.Lock | None = None) -> bool:
+    """False if the client is gone."""
+    try:
+        if lock is None:
+            handler.wfile.write(_sse_heartbeat())
+            handler.wfile.flush()
+            return True
+        with lock:
+            handler.wfile.write(_sse_heartbeat())
+            handler.wfile.flush()
+            return True
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        return False
+
+
+class _Heartbeat:
+    """Empty `data:` chunks on a timer so blocking engine reads cannot starve the client."""
+
+    def __init__(self, handler: BaseHTTPRequestHandler, lock: threading.Lock, last_beat: float | None = None) -> None:
+        self._handler = handler
+        self._lock = lock
+        self._stop = threading.Event()
+        self._last = last_beat if last_beat is not None else time.time()
+        self._thread = threading.Thread(target=self._run, name="edge-sse-heartbeat", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def touch(self) -> None:
+        self._last = time.time()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(0.2):
+            if time.time() - self._last < HEARTBEAT_INTERVAL:
+                continue
+            if not _write_heartbeat(self._handler, self._lock):
+                return
+            self._last = time.time()
+
+
 def _wait_io(child_sock: socket.socket | None, handler: BaseHTTPRequestHandler, job: Inflight | None, idle: float = 0.2) -> str:
     """'data' | 'abort' | 'disconnect' | 'timeout'."""
     if job is not None and job.abort.is_set():
@@ -954,8 +1036,14 @@ def _proxy_to(
     headers["Connection"] = "close"
     tracker = progress
     model_id = item.public_id
+    sse_open = False
+    last_beat = time.time()
     conn = http.client.HTTPConnection("127.0.0.1", item.port, timeout=600)
     try:
+        if stream:
+            _open_sse(handler, item.public_id)
+            sse_open = True
+            last_beat = time.time()
         conn.connect()
         if job is not None:
             job.set_close(conn.close)
@@ -971,12 +1059,39 @@ def _proxy_to(
                 if logs is not None and state == "disconnect":
                     logs.append(model_id, item.engine, "Client disconnected — stopping generation")
                 return
+            if sse_open and time.time() - last_beat >= HEARTBEAT_INTERVAL:
+                if not _write_heartbeat(handler):
+                    if job is not None:
+                        job.trigger()
+                    if tracker:
+                        tracker.cancel(model_id)
+                    if logs is not None:
+                        logs.append(model_id, item.engine, "Client disconnected — stopping generation")
+                    return
+                last_beat = time.time()
             if time.time() > deadline:
                 raise TimeoutError("engine timed out")
         resp = conn.getresponse()
         content_type = resp.getheader("Content-Type") or "application/json"
         is_stream = stream or "text/event-stream" in content_type.lower()
         if is_stream:
+            if not sse_open:
+                _open_sse(handler, item.public_id)
+                sse_open = True
+            if resp.status >= 400:
+                err = _read_body(resp, handler, job, conn.sock) or b""
+                try:
+                    text = err.decode("utf-8", "replace") or json.dumps(
+                        {"error": {"message": f"engine HTTP {resp.status}", "type": "server_error"}}
+                    )
+                    handler.wfile.write(f"data: {text}\n\n".encode("utf-8"))
+                    handler.wfile.write(b"data: [DONE]\n\n")
+                    handler.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                if tracker:
+                    tracker.fail(model_id, f"engine HTTP {resp.status}")
+                return
             _pipe_sse(
                 handler,
                 resp,
@@ -989,6 +1104,7 @@ def _proxy_to(
                 logs=logs,
                 engine=item.engine,
                 child_sock=conn.sock,
+                last_beat=last_beat,
             )
             return
         payload = _read_body(resp, handler, job, conn.sock)
@@ -1035,14 +1151,20 @@ def _proxy_to(
                 tracker.cancel(model_id)
             return
         try:
-            handler.send_response(502)
-            for key, value in CORS.items():
-                handler.send_header(key, value)
-            msg = json.dumps({"error": {"message": str(exc), "type": "server_error"}}).encode()
-            handler.send_header("Content-Type", "application/json")
-            handler.send_header("Content-Length", str(len(msg)))
-            handler.end_headers()
-            handler.wfile.write(msg)
+            msg = json.dumps({"error": {"message": str(exc), "type": "server_error"}})
+            if sse_open:
+                handler.wfile.write(f"data: {msg}\n\n".encode("utf-8"))
+                handler.wfile.write(b"data: [DONE]\n\n")
+                handler.wfile.flush()
+            else:
+                raw = msg.encode("utf-8")
+                handler.send_response(502)
+                for key, value in CORS.items():
+                    handler.send_header(key, value)
+                handler.send_header("Content-Type", "application/json")
+                handler.send_header("Content-Length", str(len(raw)))
+                handler.end_headers()
+                handler.wfile.write(raw)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
         if tracker:
@@ -1108,15 +1230,8 @@ def _pipe_sse(
     logs: Any = None,
     engine: str = "lm",
     child_sock: socket.socket | None = None,
+    last_beat: float | None = None,
 ) -> None:
-    handler.send_response(200)
-    for key, value in CORS.items():
-        handler.send_header(key, value)
-    handler.send_header("Content-Type", "text/event-stream")
-    handler.send_header("Cache-Control", "no-cache")
-    handler.send_header("Connection", "close")
-    handler.send_header("X-Accel-Buffering", "no")
-    handler.end_headers()
     leftover = b""
     sse_buf = b""
     pending_done: str | None = None
@@ -1126,7 +1241,10 @@ def _pipe_sse(
     read1 = getattr(resp, "read1", None)
     stopped = False
     disconnected = False
+    write_lock = threading.Lock()
+    heart = _Heartbeat(handler, write_lock, last_beat)
     _arm_timeout(child_sock, 0.2)
+    heart.start()
     try:
         while True:
             if job is not None and job.abort.is_set():
@@ -1148,9 +1266,11 @@ def _pipe_sse(
                 break
             if not chunk:
                 break
+            heart.touch()
             if filt is None:
-                handler.wfile.write(chunk)
-                handler.wfile.flush()
+                with write_lock:
+                    handler.wfile.write(chunk)
+                    handler.wfile.flush()
                 if tracker:
                     leftover = tracker.ingest_sse(model_id, leftover + chunk)
                 continue
@@ -1169,15 +1289,17 @@ def _pipe_sse(
                 if _is_done_frame(rewritten):
                     pending_done = rewritten
                     continue
-                handler.wfile.write(rewritten.encode("utf-8") + b"\n\n")
-                handler.wfile.flush()
+                with write_lock:
+                    handler.wfile.write(rewritten.encode("utf-8") + b"\n\n")
+                    handler.wfile.flush()
         if stopped:
             if logs is not None and disconnected:
                 logs.append(model_id, engine, "Client disconnected — stopping generation")
             if tracker:
                 tracker.cancel(model_id)
             if not disconnected:
-                _write_aborted_done(handler)
+                with write_lock:
+                    _write_aborted_done(handler)
             return
         if filt is not None and sse_buf.strip():
             frame = sse_buf.decode("utf-8", "replace")
@@ -1186,8 +1308,9 @@ def _pipe_sse(
                 if _is_done_frame(rewritten):
                     pending_done = rewritten
                 else:
-                    handler.wfile.write(rewritten.encode("utf-8") + b"\n\n")
-                    handler.wfile.flush()
+                    with write_lock:
+                        handler.wfile.write(rewritten.encode("utf-8") + b"\n\n")
+                        handler.wfile.flush()
         if filt is not None:
             extra_c, extra_r = filt.flush()
             extra_tools = filt.take_tool_calls()
@@ -1200,15 +1323,18 @@ def _pipe_sse(
                 if extra_tools:
                     tail["choices"][0]["delta"]["tool_calls"] = extra_tools
                     tail["choices"][0]["finish_reason"] = "tool_calls"
-                handler.wfile.write(f"data: {json.dumps(tail)}\n\n".encode("utf-8"))
-                handler.wfile.flush()
+                with write_lock:
+                    handler.wfile.write(f"data: {json.dumps(tail)}\n\n".encode("utf-8"))
+                    handler.wfile.flush()
             elif filt.saw_tools:
                 tail = {"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}
-                handler.wfile.write(f"data: {json.dumps(tail)}\n\n".encode("utf-8"))
-                handler.wfile.flush()
+                with write_lock:
+                    handler.wfile.write(f"data: {json.dumps(tail)}\n\n".encode("utf-8"))
+                    handler.wfile.flush()
         if pending_done:
-            handler.wfile.write(pending_done.encode("utf-8") + b"\n\n")
-            handler.wfile.flush()
+            with write_lock:
+                handler.wfile.write(pending_done.encode("utf-8") + b"\n\n")
+                handler.wfile.flush()
         if tracker:
             tracker.complete(model_id)
     except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
@@ -1218,7 +1344,8 @@ def _pipe_sse(
             tracker.cancel(model_id)
         if logs is not None:
             logs.append(model_id, engine, "Client disconnected — stopping generation")
-
+    finally:
+        heart.stop()
 
 def _rewrite_sse_frame(frame: str, filt: HarmonyFilter) -> str | None:
     lines = frame.splitlines()
@@ -1226,6 +1353,11 @@ def _rewrite_sse_frame(frame: str, filt: HarmonyFilter) -> str | None:
         return None
     data_lines = [line[5:].strip() for line in lines if line.startswith("data:")]
     if not data_lines:
+        # mlx-lm prefill keepalives are comment-only. OpenAI clients ignore
+        # comments for idle timers, so attach an empty delta.
+        if any(line.lstrip().startswith(":") for line in lines):
+            ping = json.dumps({"object": "chat.completion.chunk", "choices": [{"index": 0, "delta": {}, "finish_reason": None}]})
+            return "\n".join(list(lines) + [f"data: {ping}"])
         return frame
     payload = "\n".join(data_lines)
     if payload == "[DONE]":

@@ -414,9 +414,15 @@ class GatewayTests(unittest.TestCase):
             t0 = time.time()
             with urllib.request.urlopen(req, timeout=5) as resp:
                 self.assertIn("text/event-stream", resp.headers.get("Content-Type", ""))
-                first = resp.read1(64) if hasattr(resp, "read1") else resp.read(64)
+                first = b""
+                while b"keepalive" not in first and time.time() - t0 < 1.0:
+                    piece = resp.read1(256) if hasattr(resp, "read1") else resp.read(256)
+                    if not piece:
+                        break
+                    first += piece
                 elapsed = time.time() - t0
                 self.assertLess(elapsed, 0.3)
+                self.assertIn(b"assistant", first)
                 self.assertIn(b"keepalive", first)
                 started.wait(1)
                 snap = self._json("GET", "/v1/progress?model=minimax-m2.7-configi-mlx")[1]
@@ -1220,6 +1226,124 @@ class GatewayTests(unittest.TestCase):
                     break
                 time.sleep(0.05)
             self.assertEqual(phase, "idle")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_stream_role_before_slow_engine(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        class SlowStart(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                time.sleep(0.55)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b": keepalive 1/8\n\n")
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), SlowStart)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="demo",
+                engine="lm",
+                model="demo",
+                port=engine_port,
+                started_at=0.0,
+                public_id="demo",
+            )
+            self.pool._models[item.id] = item
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "demo",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            t0 = time.time()
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                first = resp.read1(180) if hasattr(resp, "read1") else resp.read(180)
+                self.assertLess(time.time() - t0, 0.35)
+                self.assertIn(b"assistant", first)
+                rest = resp.read()
+            self.assertIn(b"hi", first + rest)
+            self.assertIn(b"[DONE]", first + rest)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_heartbeat_fills_prefill_stall(self):
+        from http.server import BaseHTTPRequestHandler
+
+        from mlx_edge.pool import LoadedModel
+
+        class Stall(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b": keepalive 1/8\n\n")
+                self.wfile.flush()
+                time.sleep(2.4)
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), Stall)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="demo",
+                engine="lm",
+                model="demo",
+                port=engine_port,
+                started_at=0.0,
+                public_id="demo",
+            )
+            self.pool._models[item.id] = item
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "demo",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                body = resp.read()
+            self.assertIn(b": heartbeat", body)
+            self.assertIn(b"hi", body)
+            self.assertIn(b"[DONE]", body)
         finally:
             httpd.shutdown()
             httpd.server_close()
