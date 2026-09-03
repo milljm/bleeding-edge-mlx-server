@@ -381,16 +381,6 @@ export function flagsForModel(
   return mergeFlags({ ...base, ...(saved ?? {}) });
 }
 
-export function ownedBy(engine: EngineKind) {
-  if (engine === "vlm") return "mlx-vlm";
-  if (engine === "embed") return "mlx-embed";
-  if (engine === "tts") return "mlx-tts";
-  if (engine === "stt") return "mlx-stt";
-  if (engine === "rerank") return "mlx-rerank";
-  if (engine === "image") return "mlx-image";
-  return "mlx-lm";
-}
-
 export function engineFromOwnedBy(value?: string | null): EngineKind {
   if (value === "mlx-vlm") return "vlm";
   if (value === "mlx-embed") return "embed";

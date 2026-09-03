@@ -5,7 +5,6 @@ from mlx_edge.channels import (
     HarmonyFilter,
     assume_think_start,
     filter_text,
-    harmony_model_name,
     rewrite_completion_payload,
 )
 from mlx_edge.gateway import _rewrite_sse_frame
@@ -93,11 +92,7 @@ class ChannelTests(unittest.TestCase):
         out = _rewrite_sse_frame(frame, filt)
         self.assertTrue(out is None or "data:" not in out)
 
-    def test_harmony_model_name(self):
-        self.assertTrue(harmony_model_name("MiniMax-M2.7-ConfigI-MLX"))
-        self.assertTrue(harmony_model_name("MiniMax-M2-8bit"))
-        self.assertTrue(harmony_model_name("openai/gpt-oss-20b"))
-        self.assertFalse(harmony_model_name("Qwen3-8B-4bit"))
+    def test_assume_think_start(self):
         self.assertFalse(assume_think_start("MiniMax-M2.7-ConfigI-MLX"))
         self.assertFalse(assume_think_start("/Users/milljm/.lmstudio/models/thetom-ai/MiniMax-M2.7-ConfigI-MLX"))
         self.assertFalse(assume_think_start("openai/gpt-oss-20b"))

@@ -308,12 +308,6 @@ def looks_like_tools(text: str) -> bool:
     )
 
 
-def harmony_model_name(*names: str) -> bool:
-    """True when Edge should strip Harmony / MiniMax think wrappers."""
-    blob = " ".join(n for n in names if n).lower()
-    return "minimax" in blob or "gpt-oss" in blob or "gpt_oss" in blob or "harmony" in blob
-
-
 def assume_think_start(*names: str) -> bool:
     """HF MiniMax-M2.7 / M3 templates put ``<think>`` in the prompt.
 

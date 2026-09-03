@@ -55,6 +55,3 @@ export function persistThemePref(pref: ThemePref) {
     /* ignore */
   }
 }
-
-/** Inline boot — keep in sync with applyTheme. Avoids a dark→light flash. */
-export const THEME_BOOT_SCRIPT = `(function(){try{var k=${JSON.stringify(THEME_KEY)};var p=localStorage.getItem(k)||"dark";if(p!=="light"&&p!=="dark"&&p!=="system")p="dark";var r=p==="system"?(matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"):p;var e=document.documentElement;e.setAttribute("data-theme",r);e.style.colorScheme=r;e.classList.toggle("dark",r==="dark");e.classList.toggle("light",r==="light");}catch(e){document.documentElement.setAttribute("data-theme","dark");}})();`;
