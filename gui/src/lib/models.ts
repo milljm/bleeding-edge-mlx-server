@@ -95,11 +95,6 @@ function ollamaLibraryName(model: Pick<ModelRec, "repo" | "path" | "name">): str
   return leaf || null;
 }
 
-export function slugModelId(engine: EngineKind, repo: string, source: ModelRec["source"] = "scan") {
-  const base = `${engine}-${repo.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`.replace(/-+$/g, "");
-  return source === "manual" ? `custom-${base}` : base;
-}
-
 export function publicName(model: Pick<ModelRec, "path" | "repo" | "name">) {
   const fromPath = model.path.split(/[/\\]/).filter(Boolean).pop();
   const fromRepo = model.repo.split(/[/\\]/).filter(Boolean).pop();
@@ -127,24 +122,6 @@ export function applyEngineOverrides(
     const override = engineByModel[flagKey(model)];
     return { ...model, detectedEngine: detected, engine: override ?? detected };
   });
-}
-
-export function modelFromRepo(repo: string, engine: EngineKind, watchDir: string): ModelRec | null {
-  const trimmed = repo.trim().replace(/^['"]|['"]$/g, "");
-  if (!trimmed) return null;
-  const name = trimmed.split("/").filter(Boolean).pop() ?? trimmed;
-  const base = watchDir.replace(/\/+$/, "");
-  return {
-    id: slugModelId(engine, trimmed, "manual"),
-    name,
-    repo: trimmed,
-    path: base ? `${base}/${trimmed}` : trimmed,
-    engine,
-    size: "—",
-    quant: "local",
-    watchDir: base,
-    source: "manual",
-  };
 }
 
 export function mergeCatalog(scanned: ModelRec[], extra: ModelRec[] = []): ModelRec[] {

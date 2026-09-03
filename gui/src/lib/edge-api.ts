@@ -496,13 +496,6 @@ export async function fetchTemplate(input: { model: string; repo?: string }): Pr
   return (await parseJson(res)) as TemplateInfo;
 }
 
-export async function inspectTemplate(model: string, repo?: string): Promise<TemplateInfo> {
-  const params = new URLSearchParams({ model });
-  if (repo) params.set("repo", repo);
-  const res = await fetch(`/v1/template?${params.toString()}`);
-  return (await parseJson(res)) as TemplateInfo;
-}
-
 export function deltaContent(payload: unknown): string {
   if (!payload || typeof payload !== "object") return "";
   const choices = (payload as { choices?: { delta?: { content?: unknown }; message?: { content?: unknown } }[] }).choices;
