@@ -102,6 +102,18 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(body.get("url"), f"http://127.0.0.1:{self.port}/v1")
         self.assertEqual(body.get("bind"), f"127.0.0.1:{self.port}")
 
+    def test_host_snapshot(self):
+        status, body = self._json("GET", "/v1/host")
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get("object"), "edge.host")
+        mem = body.get("memory") or {}
+        self.assertGreater(int(mem.get("total_bytes") or 0), 0)
+        self.assertGreaterEqual(int(mem.get("used_bytes") or 0), 0)
+        gpu = body.get("gpu")
+        if gpu is not None:
+            self.assertGreaterEqual(int(gpu.get("percent") or 0), 0)
+            self.assertLessEqual(int(gpu.get("percent") or 0), 100)
+
     def test_strip_bind_args(self):
         self.assertEqual(
             strip_bind_args(["--temp", "0.2", "--host", "0.0.0.0", "--port", "9", "--max-tokens", "64"]),

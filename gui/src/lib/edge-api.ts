@@ -30,6 +30,45 @@ export function openaiUrl(host = "127.0.0.1", port: number | string = 8080) {
   return `http://${host}:${port}/v1`;
 }
 
+export type HostMemory = {
+  used_bytes: number;
+  total_bytes: number;
+  ratio: number;
+};
+
+export type HostGpu = {
+  percent: number;
+  source: string;
+};
+
+export type HostSnapshot = {
+  object: "edge.host";
+  generated_at: number;
+  memory: HostMemory;
+  gpu: HostGpu | null;
+};
+
+export async function getHost(): Promise<HostSnapshot> {
+  const res = await fetch("/v1/host");
+  const body = (await parseJson(res)) as Partial<HostSnapshot>;
+  const mem = body.memory || { used_bytes: 0, total_bytes: 0, ratio: 0 };
+  const gpuRaw = body.gpu;
+  const gpu =
+    gpuRaw && typeof gpuRaw.percent === "number"
+      ? { percent: Math.max(0, Math.min(100, gpuRaw.percent)), source: String(gpuRaw.source || "") }
+      : null;
+  return {
+    object: "edge.host",
+    generated_at: Number(body.generated_at || 0),
+    memory: {
+      used_bytes: Math.max(0, Number(mem.used_bytes || 0)),
+      total_bytes: Math.max(0, Number(mem.total_bytes || 0)),
+      ratio: Math.max(0, Math.min(1, Number(mem.ratio || 0))),
+    },
+    gpu,
+  };
+}
+
 export function modelIsLive(
   served: ServedRuntime[],
   model?: { id: string; repo: string; path?: string; name?: string } | null,

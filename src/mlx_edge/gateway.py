@@ -54,7 +54,7 @@ STATIC_TYPES = {
 }
 
 # GUI progress/log polls drown the log. Real POST /v1/chat stays visible.
-_QUIET_ACCESS = re.compile(r"\b(?:GET|HEAD) /v1/(?:progress|logs|hub/progress)(?:/|\?|\s)", re.I)
+_QUIET_ACCESS = re.compile(r"\b(?:GET|HEAD) /v1/(?:progress|logs|hub/progress|host)(?:/|\?|\s)", re.I)
 
 # Cline / OpenAI SDKs time out on the gap between `data:` events. mlx-lm only
 # sends SSE comments (`: keepalive N/M`) during prefill, and nothing at all
@@ -293,6 +293,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/hub/progress"}:
                 self._hub_progress()
                 return
+            if path in {"/v1/host", "/edge/host"}:
+                self._host()
+                return
             if self._static(raw_path):
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
@@ -398,6 +401,11 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             from mlx_edge.hub import download_progress
 
             self._json(download_progress())
+
+        def _host(self) -> None:
+            from mlx_edge.hoststats import snapshot
+
+            self._json(snapshot())
 
         def _hub_search(self) -> None:
             from mlx_edge.hub import TOKEN_HELP, search_quants, token_set

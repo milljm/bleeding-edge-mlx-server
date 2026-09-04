@@ -29,7 +29,7 @@ _RE_EMBED_KEEP_HOT = re.compile(r"\bprompt_tokens=3\b", re.I)
 _RE_CHAT_WARM = re.compile(r"\bprompt_tokens=9\b", re.I)
 _RE_ONE_TOKEN_CAP = re.compile(r"\bgenerated_tokens=1\b.*\bfinish_reason=length\b", re.I)
 _RE_PREFILL_NINE = re.compile(r"Prefill (?:started|progress|completed):.*(?:prompt_tokens=9|tokens=\d+/9\b)", re.I)
-_RE_GUI_POLL = re.compile(r"\bGET /v1/(?:progress|logs)(?:/|\?|\s)", re.I)
+_RE_GUI_POLL = re.compile(r"\bGET /v1/(?:progress|logs|host)(?:/|\?|\s)", re.I)
 
 
 def classify(text: str) -> str:

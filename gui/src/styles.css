@@ -220,6 +220,22 @@ html[data-theme="light"] {
     will-change: transform;
   }
 
+  .resource-fill {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: color-mix(in oklab, var(--edge-live) 32%, transparent);
+    transform: scaleX(var(--load-pct, 0));
+    transform-origin: left center;
+    transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+
+  .resource-fill.is-gpu {
+    background: color-mix(in oklab, var(--edge-busy) 38%, transparent);
+  }
+
   .tok-bubble {
     pointer-events: none;
     position: absolute;
