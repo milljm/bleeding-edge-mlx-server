@@ -12,7 +12,9 @@ do not see an empty reply.
 
 ``fold_reasoning`` (Settings → Reason as response) routes that analysis
 channel onto ``content`` as tokens arrive and drops a trailing replay, for
-checkpoints that generate on reasoning with no think tags.
+checkpoints that generate on reasoning with no think tags. mlx-lm emits
+that channel as ``delta.reasoning``; DeepSeek-style servers use
+``reasoning_content``. Fold reads both.
 """
 
 from __future__ import annotations
@@ -40,6 +42,63 @@ INCOMPLETE = re.compile(
     r"(?:<\|[a-zA-Z0-9_-]*|<\|?|</(?:mm:)?(?:think|thin|thi|th|t)?|<(?:mm:)?(?:think|thin|thi|th|t)?|</?mm:?)$",
     re.I,
 )
+
+# mlx-lm: `reasoning`. DeepSeek / vLLM-compat: `reasoning_content`.
+REASON_KEYS = ("reasoning_content", "reasoning")
+_MARKDOWN = re.compile(r"[*_`#>\[\]()]+")
+_SPACE = re.compile(r"\s+")
+
+
+def _plain(text: str) -> str:
+    return _SPACE.sub(" ", _MARKDOWN.sub(" ", text)).strip().lower()
+
+
+def _one_copy(reasoning: str, content: str) -> str:
+    """If both fields carry the same blob (alias or trailing dump), keep one."""
+    if not reasoning:
+        return content
+    if not content:
+        return reasoning
+    if content == reasoning or content.strip() == reasoning.strip():
+        return reasoning
+    if content.startswith(reasoning):
+        return content
+    if reasoning.startswith(content):
+        return reasoning
+    if _plain(content) == _plain(reasoning):
+        return reasoning
+    return reasoning + content
+
+
+def _is_replay(chunk: str, emitted: str) -> bool:
+    if not chunk or not emitted:
+        return False
+    if chunk == emitted or chunk.strip() == emitted.strip():
+        return True
+    plain_c, plain_e = _plain(chunk), _plain(emitted)
+    if plain_c and plain_e and plain_c == plain_e:
+        return True
+    # Trailing dump is often markdown-stripped and arrives as one blob.
+    if plain_c and plain_e and len(plain_c) > 40 and (plain_c in plain_e or plain_e in plain_c):
+        return True
+    return False
+
+
+def native_reasoning(obj: dict[str, Any]) -> str:
+    """Collect reasoning text from any vendor field, without concatenating aliases."""
+    parts: list[str] = []
+    for key in REASON_KEYS:
+        val = obj.get(key)
+        if isinstance(val, str) and val and val not in parts:
+            parts.append(val)
+    if len(parts) >= 2:
+        return _one_copy(parts[0], parts[1])
+    return parts[0] if parts else ""
+
+
+def strip_reasoning_fields(obj: dict[str, Any]) -> None:
+    for key in REASON_KEYS:
+        obj.pop(key, None)
 
 
 def _next_tag(buf: str) -> tuple[int, int, str, str] | None:
@@ -94,22 +153,29 @@ class HarmonyFilter:
     def fold_out(self, content: str, reasoning: str) -> tuple[str, str]:
         """Move reasoning onto content and drop a trailing replay of the same text.
 
-        Some checkpoints stream every token on ``reasoning_content`` and, with
-        no think tags, copy that blob into ``content`` at EOS. Folding makes
-        them look like a model that never had a reasoning stream.
+        Some checkpoints stream every token on ``reasoning`` /
+        ``reasoning_content`` and, with no think tags, copy that blob into
+        ``content`` at EOS. Folding makes them look like a model that never
+        had a reasoning stream.
         """
         if not self.fold_reasoning:
             return content, reasoning
-        chunk = (reasoning or "") + (content or "")
+        chunk = _one_copy(reasoning or "", content or "")
         if not chunk:
             return "", ""
         emitted = self._folded
-        if emitted:
-            if chunk == emitted or chunk.strip() == emitted.strip():
+        if not emitted:
+            self._folded = chunk
+            return chunk, ""
+        if _is_replay(chunk, emitted):
+            return "", ""
+        if chunk.startswith(emitted):
+            extra = chunk[len(emitted) :]
+            if not extra:
                 return "", ""
-            if chunk.startswith(emitted):
-                chunk = chunk[len(emitted) :]
-        if not chunk:
+            self._folded += extra
+            return extra, ""
+        if emitted.startswith(chunk):
             return "", ""
         self._folded += chunk
         return chunk, ""
@@ -359,8 +425,8 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
         content, reasoning = filt.push(raw)
         out: dict[str, Any] = {k: v for k, v in delta.items() if k != "content"}
         if reasoning:
-            prev = out.get("reasoning_content")
-            out["reasoning_content"] = (prev if isinstance(prev, str) else "") + reasoning
+            prev = native_reasoning(out)
+            out["reasoning_content"] = _one_copy(prev, reasoning) if prev else reasoning
         if content:
             out["content"] = content
         elif "content" in delta and not reasoning and delta.get("finish_reason"):
@@ -369,16 +435,19 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
         out = dict(delta)
     if filt.fold_reasoning:
         folded_c = out.get("content") if isinstance(out.get("content"), str) else ""
-        folded_r = out.get("reasoning_content") if isinstance(out.get("reasoning_content"), str) else ""
+        folded_r = native_reasoning(out)
         folded_c, folded_r = filt.fold_out(folded_c, folded_r)
+        strip_reasoning_fields(out)
         if folded_r:
             out["reasoning_content"] = folded_r
-        else:
-            out.pop("reasoning_content", None)
         if folded_c:
             out["content"] = folded_c
         else:
             out.pop("content", None)
+    else:
+        reason = native_reasoning(out)
+        if reason:
+            out["reasoning_content"] = reason
     tools = filt.take_tool_calls()
     if tools:
         prev_tools = out.get("tool_calls")
@@ -390,6 +459,7 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
     if (
         "content" not in out
         and "reasoning_content" not in out
+        and "reasoning" not in out
         and "tool_calls" not in out
         and not out.get("finish_reason")
     ):
@@ -409,7 +479,7 @@ def rewrite_message(
     fold_reasoning: bool = False,
 ) -> dict[str, Any]:
     raw = message.get("content")
-    native_reason = message.get("reasoning_content") if isinstance(message.get("reasoning_content"), str) else ""
+    native_reason = native_reasoning(message)
     needs_filter = isinstance(raw, str) and (
         looks_like_harmony(raw) or looks_like_think(raw) or looks_like_tools(raw) or assume_analysis
     )
@@ -419,25 +489,28 @@ def rewrite_message(
             content = raw if isinstance(raw, str) else ""
             folded, _ = HarmonyFilter(fold_reasoning=True).fold_out(content, native_reason)
             out["content"] = folded
-            out.pop("reasoning_content", None)
+            strip_reasoning_fields(out)
+            return out
+        if native_reason and "reasoning_content" not in message:
+            out = dict(message)
+            out["reasoning_content"] = native_reason
             return out
         return message
     filt = HarmonyFilter(
         assume_analysis=assume_analysis, parse_tools=parse_tools, fold_reasoning=fold_reasoning
     )
-    content, reasoning = filt.push(raw)
+    content, reasoning = filt.push(raw if isinstance(raw, str) else "")
     more_c, more_r = filt.flush()
     content, reasoning = content + more_c, reasoning + more_r
     if native_reason:
-        reasoning = reasoning + native_reason
+        reasoning = _one_copy(reasoning, native_reason)
     if fold_reasoning:
         content, reasoning = filt.fold_out(content, reasoning)
     out = dict(message)
     out["content"] = content
+    strip_reasoning_fields(out)
     if reasoning:
         out["reasoning_content"] = reasoning
-    else:
-        out.pop("reasoning_content", None)
     tools = filt.take_tool_calls() or list(filt.tool_calls)
     if tools:
         existing = out.get("tool_calls")

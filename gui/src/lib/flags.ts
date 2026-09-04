@@ -111,7 +111,7 @@ export const FLAG_DEFS: FlagDef[] = [
     key: "streamReasonToResponse",
     flag: "--stream-reason-to-response",
     label: "Reason as response",
-    help: "Route the reasoning stream onto the reply stream, as if the model had no reasoning channel. For checkpoints that generate on reasoning (no think tags) and dump the same text as content at the end. Takes effect on the next request — no Reload.",
+    help: "Route the reasoning stream onto the reply stream, as if the model had no reasoning channel. For checkpoints that generate on reasoning (mlx-lm `delta.reasoning` / `reasoning_content`, no think tags) and dump the same text as content at the end. Takes effect on the next request — no Reload.",
     type: "bool",
     engines: ["lm", "vlm"],
     group: "thinking",

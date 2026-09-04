@@ -560,6 +560,73 @@ class GatewayTests(unittest.TestCase):
             httpd.shutdown()
             httpd.server_close()
 
+    def test_reason_as_response_folds_mlx_lm_reasoning_field(self):
+        from http.server import BaseHTTPRequestHandler
+        from unittest import mock
+
+        from mlx_edge.pool import LoadedModel
+
+        class ReasonDump(BaseHTTPRequestHandler):
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                self.rfile.read(length)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(b'data: {"choices":[{"delta":{"role":"assistant","reasoning":"Hel"}}]}\n\n')
+                self.wfile.write(b'data: {"choices":[{"delta":{"reasoning":"lo"}}]}\n\n')
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n')
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), ReasonDump)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = LoadedModel(
+                id="Weird-Reason-MLX",
+                engine="lm",
+                model="/models/Weird-Reason-MLX",
+                port=engine_port,
+                started_at=0.0,
+                public_id="Weird-Reason-MLX",
+            )
+            self.pool._models[item.id] = item
+            req = urllib.request.Request(
+                self.base + "/v1/chat/completions",
+                data=json.dumps(
+                    {
+                        "model": "Weird-Reason-MLX",
+                        "messages": [{"role": "user", "content": "hello"}],
+                        "stream": True,
+                    }
+                ).encode(),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with mock.patch("mlx_edge.gateway.fold_reason_enabled", return_value=True):
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    body = resp.read().decode()
+            contents = []
+            for block in body.split("\n\n"):
+                if not block.startswith("data:") or "[DONE]" in block:
+                    continue
+                payload = json.loads(block.split("data:", 1)[1].strip())
+                delta = (payload.get("choices") or [{}])[0].get("delta") or {}
+                if delta.get("content"):
+                    contents.append(delta["content"])
+            self.assertEqual(contents, ["Hel", "lo"])
+            self.assertNotIn('"reasoning":', body)
+            self.assertNotIn("reasoning_content", body)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_reason_as_response_minimax_without_think_tags(self):
         from http.server import BaseHTTPRequestHandler
         from unittest import mock

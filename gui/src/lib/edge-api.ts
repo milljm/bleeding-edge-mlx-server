@@ -506,16 +506,33 @@ export function deltaContent(payload: unknown): string {
   return typeof message === "string" ? message : "";
 }
 
+function pickReason(a: string, b: string): string {
+  if (a && b && (a === b || a.includes(b) || b.includes(a))) return a.length >= b.length ? a : b;
+  return a || b;
+}
+
 export function deltaReasoning(payload: unknown): string {
   if (!payload || typeof payload !== "object") return "";
   const choices = (
-    payload as { choices?: { delta?: { reasoning_content?: unknown }; message?: { reasoning_content?: unknown } }[] }
+    payload as {
+      choices?: {
+        delta?: { reasoning_content?: unknown; reasoning?: unknown };
+        message?: { reasoning_content?: unknown; reasoning?: unknown };
+      }[];
+    }
   ).choices;
   const choice = choices?.[0];
-  const delta = choice?.delta?.reasoning_content;
-  if (typeof delta === "string") return delta;
-  const message = choice?.message?.reasoning_content;
-  return typeof message === "string" ? message : "";
+  const delta = choice?.delta;
+  const fromDelta = pickReason(
+    typeof delta?.reasoning_content === "string" ? delta.reasoning_content : "",
+    typeof delta?.reasoning === "string" ? delta.reasoning : "",
+  );
+  if (fromDelta) return fromDelta;
+  const message = choice?.message;
+  return pickReason(
+    typeof message?.reasoning_content === "string" ? message.reasoning_content : "",
+    typeof message?.reasoning === "string" ? message.reasoning : "",
+  );
 }
 
 export function deltaCompletionTokens(payload: unknown): number {

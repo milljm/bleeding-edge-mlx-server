@@ -207,6 +207,51 @@ class ChannelTests(unittest.TestCase):
         # Replay dump is dropped entirely.
         self.assertEqual(dumped.get("choices"), [])
 
+    def test_fold_reason_mlx_lm_reasoning_field(self):
+        # mlx-lm emits `delta.reasoning`, not `reasoning_content`.
+        filt = HarmonyFilter(fold_reasoning=True)
+        first = rewrite_completion_payload(
+            {"choices": [{"delta": {"role": "assistant", "reasoning": "Hel"}}]},
+            filt=filt,
+        )
+        self.assertEqual(first["choices"][0]["delta"].get("content"), "Hel")
+        self.assertNotIn("reasoning", first["choices"][0]["delta"])
+        self.assertNotIn("reasoning_content", first["choices"][0]["delta"])
+        second = rewrite_completion_payload(
+            {"choices": [{"delta": {"reasoning": "lo"}}]},
+            filt=filt,
+        )
+        self.assertEqual(second["choices"][0]["delta"].get("content"), "lo")
+        dumped = rewrite_completion_payload(
+            {"choices": [{"delta": {"content": "Hello"}}]},
+            filt=filt,
+        )
+        self.assertEqual(dumped.get("choices"), [])
+
+    def test_fold_reason_does_not_double_aliased_fields(self):
+        filt = HarmonyFilter(fold_reasoning=True)
+        out = rewrite_completion_payload(
+            {"choices": [{"delta": {"reasoning": "Hel", "reasoning_content": "Hel"}}]},
+            filt=filt,
+        )
+        self.assertEqual(out["choices"][0]["delta"].get("content"), "Hel")
+
+    def test_fold_reason_drops_markdown_stripped_dump(self):
+        filt = HarmonyFilter(fold_reasoning=True)
+        streamed, _ = filt.fold_out("", "Use **Streamlit** for the GUI.")
+        self.assertIn("Streamlit", streamed)
+        dump, reason = filt.fold_out("Use Streamlit for the GUI.", "")
+        self.assertEqual(dump, "")
+        self.assertEqual(reason, "")
+
+    def test_normalize_reasoning_field_without_fold(self):
+        out = rewrite_completion_payload(
+            {"choices": [{"delta": {"reasoning": "plan"}}]},
+        )
+        delta = out["choices"][0]["delta"]
+        self.assertEqual(delta.get("reasoning_content"), "plan")
+        self.assertEqual(delta.get("reasoning"), "plan")
+
     def test_filter_text_fold_reason(self):
         content, reasoning = filter_text("Hello from MiniMax.", assume_analysis=True, fold_reasoning=True)
         self.assertEqual(content, "Hello from MiniMax.")

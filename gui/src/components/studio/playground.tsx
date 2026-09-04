@@ -25,6 +25,17 @@ import type { EngineKind } from "@/lib/flags";
 
 type ChatTurn = PlaygroundTurn;
 
+function looksLikeReplay(piece: string, assistant: string): boolean {
+  if (!piece || !assistant) return false;
+  if (piece === assistant || piece.trim() === assistant.trim()) return true;
+  if (assistant.startsWith(piece) && piece.length >= Math.min(40, assistant.length)) return true;
+  const plain = (s: string) => s.replace(/[*_`#>\[\]()]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  const a = plain(assistant);
+  const p = plain(piece);
+  if (a && p && (a === p || (p.length > 40 && (a.includes(p) || p.includes(a))))) return true;
+  return false;
+}
+
 
 export function Playground() {
   const model = useStudio((s) => s.selected());
@@ -380,7 +391,7 @@ function ChatPlayground({ live }: { live: boolean }) {
                 if (foldReason) {
                   if (think) assistant += think;
                   if (piece) {
-                    if (piece === assistant || (assistant && piece.trim() === assistant.trim())) {
+                    if (looksLikeReplay(piece, assistant)) {
                       /* trailing dump of the reasoning stream — already shown */
                     } else if (assistant && piece.startsWith(assistant)) {
                       assistant = piece;
@@ -413,14 +424,14 @@ function ChatPlayground({ live }: { live: boolean }) {
         else finish(assistant, reasoning);
       } else {
         const body = (await res.json()) as {
-          choices?: { message?: { content?: string; reasoning_content?: string } }[];
+          choices?: { message?: { content?: string; reasoning_content?: string; reasoning?: string } }[];
           usage?: { completion_tokens?: number };
         };
         usageTokens = Number(body.usage?.completion_tokens || 0);
         if (!firstAt) firstAt = performance.now();
         const msg = body.choices?.[0]?.message;
         const reply = (msg?.content || "").trim();
-        const thinkText = (msg?.reasoning_content || "").trim();
+        const thinkText = (msg?.reasoning_content || msg?.reasoning || "").trim();
         if (foldReason) {
           const merged =
             reply && thinkText && (reply === thinkText || reply.startsWith(thinkText) || thinkText.startsWith(reply))
