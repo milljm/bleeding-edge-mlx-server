@@ -127,12 +127,7 @@ export function FlagPanel() {
           See Endpoint for more information on how to use this model.
         </p>
       ) : model.engine === "vlm" ? (
-        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
-          mlx-vlm.server has no <span className="font-mono text-foreground">--temp</span> /{" "}
-          <span className="font-mono text-foreground">--top-p</span> /{" "}
-          <span className="font-mono text-foreground">--prompt-cache-size</span> — those are mlx-lm
-          defaults. Send sampling on the request.
-        </p>
+        <VlmPlaygroundSampling />
       ) : null}
       <EngineCard />
       {model.engine === "lm" ? <TemplateCard /> : null}
@@ -156,6 +151,58 @@ export function FlagPanel() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+function VlmPlaygroundSampling() {
+  const flags = useStudio((s) => s.flags);
+  const setFlag = useStudio((s) => s.setFlag);
+  const temp = Number(flags.temp ?? 0);
+  const topP = Number(flags.topP ?? 1);
+
+  return (
+    <section className="space-y-4 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
+      <p className="text-sm text-muted-foreground">
+        mlx-vlm.server has no <span className="font-mono text-foreground">--temp</span> /{" "}
+        <span className="font-mono text-foreground">--top-p</span> /{" "}
+        <span className="font-mono text-foreground">--prompt-cache-size</span> — those are mlx-lm
+        defaults. Send sampling on the request.
+      </p>
+      <p className="text-sm text-foreground">
+        These sliders apply to Playground only. They are not mlx-vlm.server flags, and they do not
+        affect Cline or any other client.
+      </p>
+      <div className="grid gap-5 sm:grid-cols-2">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="playground-temp">Temperature</Label>
+            <span className="font-mono text-xs text-muted-foreground tabular-nums">{temp}</span>
+          </div>
+          <Slider
+            id="playground-temp"
+            min={0}
+            max={2}
+            step={0.05}
+            value={[temp]}
+            onValueChange={([next]) => setFlag("temp", next ?? 0)}
+          />
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor="playground-top-p">Top-p</Label>
+            <span className="font-mono text-xs text-muted-foreground tabular-nums">{topP}</span>
+          </div>
+          <Slider
+            id="playground-top-p"
+            min={0}
+            max={1}
+            step={0.01}
+            value={[topP]}
+            onValueChange={([next]) => setFlag("topP", next ?? 1)}
+          />
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -357,6 +357,12 @@ function ChatPlayground({ live }: { live: boolean }) {
           model: loadTarget(model),
           messages: next.map((t) => ({ role: t.role, content: t.text })),
           max_tokens: Number(flags.maxTokens) || 512,
+          ...(model.engine === "vlm"
+            ? {
+                temperature: Number(flags.temp ?? 0),
+                top_p: Number(flags.topP ?? 1),
+              }
+            : {}),
           stream: true,
         }),
         signal: ac.signal,
