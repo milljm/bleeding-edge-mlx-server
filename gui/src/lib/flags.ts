@@ -12,6 +12,8 @@ export type FlagDef = {
   group?: FlagGroup;
   advanced?: boolean;
   always?: boolean;
+  /** Edge-only: stored in prefs, never passed to mlx-lm / mlx-vlm. */
+  edge?: boolean;
   min?: number;
   max?: number;
   step?: number;
@@ -103,6 +105,17 @@ export const FLAG_DEFS: FlagDef[] = [
     type: "bool",
     engines: ["vlm"],
     group: "thinking",
+    default: false,
+  },
+  {
+    key: "streamReasonToResponse",
+    flag: "--stream-reason-to-response",
+    label: "Reason as response",
+    help: "Route the reasoning stream onto the reply stream, as if the model had no reasoning channel. For checkpoints that generate on reasoning (mlx-lm `delta.reasoning` / `reasoning_content`, no think tags) and dump the same text as content at the end. Takes effect on the next request — no Reload.",
+    type: "bool",
+    engines: ["lm", "vlm"],
+    group: "thinking",
+    edge: true,
     default: false,
   },
   {
@@ -349,6 +362,7 @@ export function flagArgs(engine: EngineKind, values: FlagValues, omit: string[] 
   const skip = new Set(omit);
   for (const def of FLAG_DEFS) {
     if (!def.engines.includes(engine)) continue;
+    if (def.edge) continue;
     if (skip.has(def.key)) continue;
     const value = values[def.key] ?? def.default;
     if (def.type === "bool") {

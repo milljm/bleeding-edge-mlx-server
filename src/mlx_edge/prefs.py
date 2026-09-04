@@ -57,3 +57,34 @@ def _clean(raw: dict[str, Any]) -> dict[str, Any]:
             if name and engine in ENGINES:
                 engines[name] = engine
     return {"watchDirs": dirs, "flagsByModel": flags, "engineByModel": engines}
+
+
+def _truthy(value: object) -> bool:
+    if value is True or value == 1:
+        return True
+    if isinstance(value, str) and value.strip().lower() in {"true", "1", "yes"}:
+        return True
+    return False
+
+
+def fold_reason_enabled(names: list[str], prefs: dict[str, Any] | None = None) -> bool:
+    """Settings toggle: route reasoning_content onto the reply stream.
+
+    Matched against ``flagsByModel`` keys (repo / id / path) using the same
+    basename rules as the gateway.
+    """
+    data = prefs if prefs is not None else load_prefs()
+    flags = data.get("flagsByModel") or {}
+    if not isinstance(flags, dict):
+        return False
+    needles = [n for n in names if n]
+    if not needles:
+        return False
+    from mlx_edge.pool import names_match
+
+    for key, values in flags.items():
+        if not isinstance(values, dict):
+            continue
+        if any(names_match(str(key), n) for n in needles):
+            return _truthy(values.get("streamReasonToResponse"))
+    return False

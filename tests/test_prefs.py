@@ -41,6 +41,19 @@ class PrefsTests(unittest.TestCase):
             self.assertEqual(again["watchDirs"], [])
             self.assertEqual(json.loads(path.read_text())["watchDirs"], [])
 
+    def test_fold_reason_enabled_matches_basename(self):
+        from mlx_edge.prefs import fold_reason_enabled
+
+        prefs = {
+            "flagsByModel": {
+                "mlx-community/Weird-Reason-MLX": {"streamReasonToResponse": True, "temp": 0.2},
+            }
+        }
+        self.assertTrue(fold_reason_enabled(["Weird-Reason-MLX"], prefs))
+        self.assertTrue(fold_reason_enabled(["/models/mlx-community/Weird-Reason-MLX"], prefs))
+        self.assertFalse(fold_reason_enabled(["Qwen3-8B-4bit"], prefs))
+        self.assertFalse(fold_reason_enabled(["Weird-Reason-MLX"], {"flagsByModel": {}}))
+
 
 if __name__ == "__main__":
     unittest.main()
