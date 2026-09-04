@@ -179,7 +179,9 @@ use Harmony `<|channel|>` tokens instead.
 On Serve, if the folder has no template, Edge pulls one from Hugging Face
 and passes `--chat-template` to **mlx-lm.server**. mlx-vlm.server has no
 `--chat-template` / `--temp` / `--top-p` / `--prompt-cache-size` — sampling
-is on the request, thinking is `--enable-thinking`. TTS, STT, embed, rerank, and
+is on the request, thinking is `--enable-thinking`. Playground reads those
+from Settings (VLM sliders, Playground only) and sends `temperature` / `top_p`
+on the chat request. TTS, STT, embed, rerank, and
 image-gen are their own Serve engines (scan tags kokoro / whisper / bge /
 Qwen3-Reranker / FLUX, or force Engine). Harmony is only injected as a fallback for gpt-oss / ConfigI names — not for
 generic MiniMax-M2.7 / M3 (those would start in the wrong dialect and yield
