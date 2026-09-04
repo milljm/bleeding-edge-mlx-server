@@ -46,6 +46,7 @@ class LogTests(unittest.TestCase):
             "Request completed: endpoint=/v1/embeddings model=/m/embed stream=False backend=mlx-embeddings-native prompt_tokens=3 generated_tokens=0 elapsed=0.018s",
             '192.168.142.4 - "GET /v1/progress HTTP/1.1" 200 -',
             '192.168.142.4 - "GET /v1/progress?model=MiniMax-M2.7-8bit HTTP/1.1" 200 -',
+            '192.168.142.4 - "GET /v1/host HTTP/1.1" 200 -',
         ]
         for line in noise:
             self.assertTrue(is_noise(line), line)

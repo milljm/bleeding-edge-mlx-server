@@ -57,6 +57,8 @@ basename (any case), `org/name`, or the path.
   basename. Alias: `GET /edge/progress`.
 - `GET /v1/progress/stream` — the same object as SSE whenever it changes.
   Alias: `GET /edge/progress/stream`.
+- `GET /v1/host` — machine memory (used/total bytes) and GPU utilization when
+  the OS exposes it (macOS `ioreg`, Linux `gpu_busy_percent`). Alias: `GET /edge/host`.
 - `GET /v1/logs` / `GET /v1/logs/stream` — engine stdout ring buffer (CLI-like).
   `POST /v1/logs/clear` empties it.
 - `GET`/`POST /v1/template` — inspect or pull a Jinja chat template (local

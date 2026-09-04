@@ -26,6 +26,7 @@ import {
 } from "@/lib/edge-api";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
+import { ResourceMeter } from "@/components/studio/resource-meter";
 
 export function Sidebar({
   onNavigate,
@@ -94,6 +95,8 @@ export function Sidebar({
           </Button>
         ) : null}
       </div>
+
+      <ResourceMeter />
 
       <Section title="Watch" count={watchDirs.length} defaultOpen>
         <form onSubmit={submitDir} className="flex gap-2 px-4">
