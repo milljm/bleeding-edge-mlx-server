@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { engineLabel } from "@/lib/command";
 import { fetchTemplate, modelIsLive, postHubDelete } from "@/lib/edge-api";
 import { flagsDirty, flagsFor, type EngineKind, type FlagDef, type FlagGroup } from "@/lib/flags";
-import { flagKey, formatContext, loadTarget, modelOrigin } from "@/lib/models";
+import { flagKey, formatContext, loadTarget, modelOrigin, type ModelRec } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +33,7 @@ const GROUP_LABEL: Record<FlagGroup, string> = {
 
 export function FlagPanel() {
   const model = useStudio((s) => s.selected());
+  const models = useStudio((s) => s.models);
   const flags = useStudio((s) => s.flags);
   const served = useStudio((s) => s.served);
   const setFlag = useStudio((s) => s.setFlag);
@@ -140,14 +141,14 @@ export function FlagPanel() {
             <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
               {GROUP_LABEL[group]}
             </h3>
-            <FlagGrid defs={defs} values={flags} onChange={setFlag} />
+            <FlagGrid defs={defs} values={flags} onChange={setFlag} models={models} current={model} />
           </section>
         );
       })}
       {extra.length ? (
         <section className="space-y-4">
           <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Advanced</h3>
-          <FlagGrid defs={extra} values={flags} onChange={setFlag} />
+          <FlagGrid defs={extra} values={flags} onChange={setFlag} models={models} current={model} />
         </section>
       ) : null}
     </div>
@@ -414,29 +415,87 @@ function FlagGrid({
   defs,
   values,
   onChange,
+  models,
+  current,
 }: {
   defs: FlagDef[];
   values: Record<string, string | number | boolean>;
   onChange: (key: string, value: string | number | boolean) => void;
+  models: ModelRec[];
+  current: ModelRec;
 }) {
   return (
     <div className="grid gap-5 sm:grid-cols-2">
       {defs.map((def) => (
-        <FlagField key={def.key} def={def} value={values[def.key] ?? def.default} onChange={onChange} />
+        <FlagField
+          key={def.key}
+          def={def}
+          value={values[def.key] ?? def.default}
+          onChange={onChange}
+          models={models}
+          current={current}
+        />
       ))}
     </div>
   );
+}
+
+function draftChoices(models: ModelRec[], current: ModelRec, value: string) {
+  const self = loadTarget(current);
+  const rows = models
+    .filter((m) => m.engine === "lm" || m.engine === "vlm")
+    .filter((m) => loadTarget(m) !== self)
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  const opts = [
+    { value: "", label: "None" },
+    ...rows.map((m) => ({
+      value: loadTarget(m),
+      label: `${m.name} · ${m.engine}${m.quant && m.quant !== "local" ? ` · ${m.quant}` : ""}`,
+    })),
+  ];
+  if (value && !opts.some((o) => o.value === value)) {
+    opts.push({ value, label: value });
+  }
+  return opts;
 }
 
 function FlagField({
   def,
   value,
   onChange,
+  models,
+  current,
 }: {
   def: FlagDef;
   value: string | number | boolean;
   onChange: (key: string, value: string | number | boolean) => void;
+  models: ModelRec[];
+  current: ModelRec;
 }) {
+  if (def.key === "draftModel") {
+    const selected = String(value ?? "");
+    const options = draftChoices(models, current, selected);
+    return (
+      <div className="space-y-2 sm:col-span-2">
+        <Label htmlFor={def.key}>{def.label}</Label>
+        <select
+          id={def.key}
+          className="flex h-11 w-full rounded-md border border-input bg-card px-3 text-sm"
+          value={selected}
+          onChange={(e) => onChange(def.key, e.target.value)}
+        >
+          {options.map((opt) => (
+            <option key={opt.value || "none"} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-muted-foreground">{def.help}</p>
+      </div>
+    );
+  }
+
   if (def.type === "bool") {
     return (
       <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-3 py-3 sm:col-span-2">
