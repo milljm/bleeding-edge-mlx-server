@@ -198,6 +198,13 @@ read `delta.content` would otherwise see empty chunks and one dump at EOS).
 Plain Qwen / Llama output is untouched. Injected MiniMax / Harmony chat
 templates include a `# Tools` block when the request has `tools`.
 
+Some checkpoints stream every token on `reasoning_content` and, with no think
+tags, copy the same text into `content` at the end — clients that only read
+`delta.content` see a dump. Settings → Thinking → **Reason as response** folds
+the reasoning channel into `content` as tokens arrive and drops the trailing
+replay. It is an Edge pref (not an mlx-lm flag); it takes effect on the next
+request without Reload.
+
 ## Hot-load vs LM Studio
 
 Edge **does** keep several models resident: each Serve starts its own

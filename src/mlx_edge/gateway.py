@@ -16,7 +16,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from mlx_edge.channels import HarmonyFilter, assume_think_start, rewrite_completion_payload
 from mlx_edge.playground import PlaygroundStore
-from mlx_edge.pool import Inflight, LoadedModel, ModelPool
+from mlx_edge.pool import Inflight, LoadedModel, ModelPool, names_for
+from mlx_edge.prefs import fold_reason_enabled
 from mlx_edge.progress import ProgressTracker
 
 CORS = {
@@ -784,6 +785,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             # started with so a short repo name cannot trigger a re-download.
             body = prepare_chat_body(body, item)
             stream = wants_stream(body)
+            fold_reasoning = fold_reason_enabled(names_for(item))
             pool.progress.begin(item.public_id, item.engine, stream=stream)
             job = pool.track_request(item.public_id)
             try:
@@ -796,6 +798,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     strip_channels=item.engine != "embed",
                     assume_analysis=assume_think_start(item.model, item.public_id),
                     parse_tools=request_has_tools(body),
+                    fold_reasoning=fold_reasoning,
                     job=job,
                     logs=pool.logs,
                 )
@@ -1023,6 +1026,7 @@ def _proxy_to(
     strip_channels: bool = False,
     assume_analysis: bool = False,
     parse_tools: bool = False,
+    fold_reasoning: bool = False,
     job: Inflight | None = None,
     logs: Any = None,
 ) -> None:
@@ -1100,6 +1104,7 @@ def _proxy_to(
                 strip_channels=strip_channels,
                 assume_analysis=assume_analysis,
                 parse_tools=parse_tools,
+                fold_reasoning=fold_reasoning,
                 job=job,
                 logs=logs,
                 engine=item.engine,
@@ -1122,7 +1127,10 @@ def _proxy_to(
             if isinstance(data, dict):
                 payload = json.dumps(
                     rewrite_completion_payload(
-                        data, assume_analysis=assume_analysis, parse_tools=parse_tools
+                        data,
+                        assume_analysis=assume_analysis,
+                        parse_tools=parse_tools,
+                        fold_reasoning=fold_reasoning,
                     )
                 ).encode("utf-8")
         handler.send_response(resp.status)
@@ -1226,6 +1234,7 @@ def _pipe_sse(
     strip_channels: bool = False,
     assume_analysis: bool = False,
     parse_tools: bool = False,
+    fold_reasoning: bool = False,
     job: Inflight | None = None,
     logs: Any = None,
     engine: str = "lm",
@@ -1236,7 +1245,11 @@ def _pipe_sse(
     sse_buf = b""
     pending_done: str | None = None
     filt = (
-        HarmonyFilter(assume_analysis=assume_analysis, parse_tools=parse_tools) if strip_channels else None
+        HarmonyFilter(
+            assume_analysis=assume_analysis, parse_tools=parse_tools, fold_reasoning=fold_reasoning
+        )
+        if strip_channels
+        else None
     )
     read1 = getattr(resp, "read1", None)
     stopped = False
@@ -1313,6 +1326,8 @@ def _pipe_sse(
                         handler.wfile.flush()
         if filt is not None:
             extra_c, extra_r = filt.flush()
+            if filt.fold_reasoning:
+                extra_c, extra_r = filt.fold_out(extra_c, extra_r)
             extra_tools = filt.take_tool_calls()
             if extra_c or extra_r or extra_tools:
                 tail = {"choices": [{"index": 0, "delta": {}}]}

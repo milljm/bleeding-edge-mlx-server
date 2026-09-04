@@ -9,6 +9,10 @@ Edge keeps OpenAI ``content`` as the final answer and puts analysis in
 ``reasoning_content``. If a MiniMax generation never emits a think/Harmony
 closer, the buffered analysis is promoted back to ``content`` so clients
 do not see an empty reply.
+
+``fold_reasoning`` (Settings → Reason as response) routes that analysis
+channel onto ``content`` as tokens arrive and drops a trailing replay, for
+checkpoints that generate on reasoning with no think tags.
 """
 
 from __future__ import annotations
@@ -62,17 +66,19 @@ def _incomplete_start(buf: str) -> int | None:
 
 
 class HarmonyFilter:
-    def __init__(self, assume_analysis: bool = False, parse_tools: bool = True) -> None:
+    def __init__(self, assume_analysis: bool = False, parse_tools: bool = True, fold_reasoning: bool = False) -> None:
         self.buf = ""
         # MiniMax-M2.7's HF template already wrote `<think>\n` in the prompt,
         # so generation starts *inside* a think block. Qwen/Llama stay in
         # content unless they emit tags themselves.
         self.assume = assume_analysis
         self.parse_tools = parse_tools
+        self.fold_reasoning = fold_reasoning
         self.mode = "analysis" if assume_analysis else "content"
         self.seen_channel = False
         self.seen_think = False
         self.held = ""
+        self._folded = ""
         self.tool_calls: list[dict[str, Any]] = []
         self._pending_tools: list[dict[str, Any]] = []
         self._tool_name: str | None = None
@@ -84,6 +90,29 @@ class HarmonyFilter:
         out = self._pending_tools
         self._pending_tools = []
         return out
+
+    def fold_out(self, content: str, reasoning: str) -> tuple[str, str]:
+        """Move reasoning onto content and drop a trailing replay of the same text.
+
+        Some checkpoints stream every token on ``reasoning_content`` and, with
+        no think tags, copy that blob into ``content`` at EOS. Folding makes
+        them look like a model that never had a reasoning stream.
+        """
+        if not self.fold_reasoning:
+            return content, reasoning
+        chunk = (reasoning or "") + (content or "")
+        if not chunk:
+            return "", ""
+        emitted = self._folded
+        if emitted:
+            if chunk == emitted or chunk.strip() == emitted.strip():
+                return "", ""
+            if chunk.startswith(emitted):
+                chunk = chunk[len(emitted) :]
+        if not chunk:
+            return "", ""
+        self._folded += chunk
+        return chunk, ""
 
     def _add_tools(self, calls: list[dict[str, Any]]) -> None:
         if not calls:
@@ -138,7 +167,7 @@ class HarmonyFilter:
             reasoning_s, extra_r = extract_tool_markup(reasoning_s)
             self._add_tools(extra_r)
         confirmed = self.seen_think or self.seen_channel
-        if self.assume and not confirmed:
+        if self.assume and not confirmed and not self.fold_reasoning:
             # Stream thinking live as reasoning; remember it so flush can
             # promote to content if MiniMax never emits a closer.
             blob = content_s + reasoning_s
@@ -165,7 +194,7 @@ class HarmonyFilter:
             self._add_tools(extra_r)
         blob = self.held + content_s + reasoning_s
         self.held = ""
-        if self.assume and not self.seen_think and not self.seen_channel:
+        if self.assume and not self.seen_think and not self.seen_channel and not self.fold_reasoning:
             leftover = blob
             if self.parse_tools:
                 leftover, more = extract_tool_markup(blob)
@@ -271,11 +300,13 @@ class HarmonyFilter:
         content.append(text)
 
 
-def filter_text(text: str, assume_analysis: bool = False) -> tuple[str, str]:
-    filt = HarmonyFilter(assume_analysis=assume_analysis)
+def filter_text(text: str, assume_analysis: bool = False, fold_reasoning: bool = False) -> tuple[str, str]:
+    filt = HarmonyFilter(assume_analysis=assume_analysis, fold_reasoning=fold_reasoning)
     content, reasoning = filt.push(text)
     more_c, more_r = filt.flush()
     content, reasoning = content + more_c, reasoning + more_r
+    if fold_reasoning:
+        return filt.fold_out(content, reasoning)
     if assume_analysis and not filt.seen_think and not filt.seen_channel:
         return (content or reasoning), ""
     return content, reasoning
@@ -336,6 +367,18 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
             out["content"] = ""
     else:
         out = dict(delta)
+    if filt.fold_reasoning:
+        folded_c = out.get("content") if isinstance(out.get("content"), str) else ""
+        folded_r = out.get("reasoning_content") if isinstance(out.get("reasoning_content"), str) else ""
+        folded_c, folded_r = filt.fold_out(folded_c, folded_r)
+        if folded_r:
+            out["reasoning_content"] = folded_r
+        else:
+            out.pop("reasoning_content", None)
+        if folded_c:
+            out["content"] = folded_c
+        else:
+            out.pop("content", None)
     tools = filt.take_tool_calls()
     if tools:
         prev_tools = out.get("tool_calls")
@@ -359,20 +402,42 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
     return out
 
 
-def rewrite_message(message: dict[str, Any], assume_analysis: bool = False, parse_tools: bool = True) -> dict[str, Any]:
+def rewrite_message(
+    message: dict[str, Any],
+    assume_analysis: bool = False,
+    parse_tools: bool = True,
+    fold_reasoning: bool = False,
+) -> dict[str, Any]:
     raw = message.get("content")
-    if not isinstance(raw, str):
+    native_reason = message.get("reasoning_content") if isinstance(message.get("reasoning_content"), str) else ""
+    needs_filter = isinstance(raw, str) and (
+        looks_like_harmony(raw) or looks_like_think(raw) or looks_like_tools(raw) or assume_analysis
+    )
+    if not needs_filter:
+        if fold_reasoning and native_reason:
+            out = dict(message)
+            content = raw if isinstance(raw, str) else ""
+            folded, _ = HarmonyFilter(fold_reasoning=True).fold_out(content, native_reason)
+            out["content"] = folded
+            out.pop("reasoning_content", None)
+            return out
         return message
-    if not looks_like_harmony(raw) and not looks_like_think(raw) and not looks_like_tools(raw) and not assume_analysis:
-        return message
-    filt = HarmonyFilter(assume_analysis=assume_analysis, parse_tools=parse_tools)
+    filt = HarmonyFilter(
+        assume_analysis=assume_analysis, parse_tools=parse_tools, fold_reasoning=fold_reasoning
+    )
     content, reasoning = filt.push(raw)
     more_c, more_r = filt.flush()
     content, reasoning = content + more_c, reasoning + more_r
+    if native_reason:
+        reasoning = reasoning + native_reason
+    if fold_reasoning:
+        content, reasoning = filt.fold_out(content, reasoning)
     out = dict(message)
     out["content"] = content
     if reasoning:
         out["reasoning_content"] = reasoning
+    else:
+        out.pop("reasoning_content", None)
     tools = filt.take_tool_calls() or list(filt.tool_calls)
     if tools:
         existing = out.get("tool_calls")
@@ -389,11 +454,14 @@ def rewrite_completion_payload(
     filt: HarmonyFilter | None = None,
     assume_analysis: bool = False,
     parse_tools: bool = True,
+    fold_reasoning: bool = False,
 ) -> dict[str, Any]:
     choices = payload.get("choices")
     if not isinstance(choices, list):
         return payload
-    filt = filt or HarmonyFilter(assume_analysis=assume_analysis, parse_tools=parse_tools)
+    filt = filt or HarmonyFilter(
+        assume_analysis=assume_analysis, parse_tools=parse_tools, fold_reasoning=fold_reasoning
+    )
     out_choices = []
     for choice in choices:
         if not isinstance(choice, dict):
@@ -411,7 +479,10 @@ def rewrite_completion_payload(
                     delta["finish_reason"] = "tool_calls"
         if isinstance(row.get("message"), dict):
             row["message"] = rewrite_message(
-                dict(row["message"]), assume_analysis=assume_analysis, parse_tools=filt.parse_tools
+                dict(row["message"]),
+                assume_analysis=assume_analysis,
+                parse_tools=filt.parse_tools,
+                fold_reasoning=filt.fold_reasoning,
             )
             msg = row["message"]
             if isinstance(msg, dict) and msg.get("tool_calls") and row.get("finish_reason") in {None, "stop"}:

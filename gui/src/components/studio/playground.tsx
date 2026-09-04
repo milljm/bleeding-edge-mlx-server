@@ -319,10 +319,16 @@ function ChatPlayground({ live }: { live: boolean }) {
     let firstAt = 0;
     let usageTokens = 0;
     const modelLabel = publicName(model);
+    const foldReason = Boolean(flags.streamReasonToResponse);
     const paint = (value: string, thinkText = "", metrics?: PlaygroundMetrics) =>
       setTurns([
         ...next,
-        { role: "assistant", text: value, thinking: thinkText || undefined, metrics },
+        {
+          role: "assistant",
+          text: value,
+          thinking: foldReason ? undefined : thinkText || undefined,
+          metrics,
+        },
       ]);
     const finish = (value: string, thinkText = "") => {
       const end = performance.now();
@@ -371,11 +377,28 @@ function ChatPlayground({ live }: { live: boolean }) {
                 const think = deltaReasoning(payload);
                 const used = deltaCompletionTokens(payload);
                 if (used) usageTokens = used;
-                if (think) reasoning += think;
-                if (piece) assistant += piece;
-                if (piece || think) {
-                  if (!firstAt) firstAt = performance.now();
-                  paint(assistant, reasoning);
+                if (foldReason) {
+                  if (think) assistant += think;
+                  if (piece) {
+                    if (piece === assistant || (assistant && piece.trim() === assistant.trim())) {
+                      /* trailing dump of the reasoning stream — already shown */
+                    } else if (assistant && piece.startsWith(assistant)) {
+                      assistant = piece;
+                    } else {
+                      assistant += piece;
+                    }
+                  }
+                  if (think || piece) {
+                    if (!firstAt) firstAt = performance.now();
+                    paint(assistant, "");
+                  }
+                } else {
+                  if (think) reasoning += think;
+                  if (piece) assistant += piece;
+                  if (piece || think) {
+                    if (!firstAt) firstAt = performance.now();
+                    paint(assistant, reasoning);
+                  }
                 }
               } catch {
                 /* ignore malformed chunk */
@@ -383,7 +406,10 @@ function ChatPlayground({ live }: { live: boolean }) {
             }
           }
         }
-        if (!assistant) finish(reasoning.trim() ? "" : "(empty)", reasoning.trim());
+        if (foldReason) {
+          if (!assistant) finish(reasoning.trim() || "(empty)", "");
+          else finish(assistant, "");
+        } else if (!assistant) finish(reasoning.trim() ? "" : "(empty)", reasoning.trim());
         else finish(assistant, reasoning);
       } else {
         const body = (await res.json()) as {
@@ -393,7 +419,19 @@ function ChatPlayground({ live }: { live: boolean }) {
         usageTokens = Number(body.usage?.completion_tokens || 0);
         if (!firstAt) firstAt = performance.now();
         const msg = body.choices?.[0]?.message;
-        finish((msg?.content || "").trim() || ((msg?.reasoning_content || "").trim() ? "" : "(empty)"), (msg?.reasoning_content || "").trim());
+        const reply = (msg?.content || "").trim();
+        const thinkText = (msg?.reasoning_content || "").trim();
+        if (foldReason) {
+          const merged =
+            reply && thinkText && (reply === thinkText || reply.startsWith(thinkText) || thinkText.startsWith(reply))
+              ? reply.length >= thinkText.length
+                ? reply
+                : thinkText
+              : `${thinkText}${reply}`.trim();
+          finish(merged || "(empty)", "");
+        } else {
+          finish(reply || (thinkText ? "" : "(empty)"), thinkText);
+        }
       }
     } catch (err) {
       if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;

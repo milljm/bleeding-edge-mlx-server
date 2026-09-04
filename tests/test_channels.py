@@ -170,3 +170,56 @@ class ChannelTests(unittest.TestCase):
         self.assertEqual(content, "Hello from Qwen.")
         self.assertEqual(reasoning, "")
 
+    def test_fold_reason_streams_assumed_analysis_as_content(self):
+        filt = HarmonyFilter(assume_analysis=True, fold_reasoning=True)
+        c1, r1 = filt.push("Hello from MiniMax.")
+        c1, r1 = filt.fold_out(c1, r1)
+        self.assertEqual(c1, "Hello from MiniMax.")
+        self.assertEqual(r1, "")
+        c2, r2 = filt.flush()
+        c2, r2 = filt.fold_out(c2, r2)
+        self.assertEqual(c2, "")
+        self.assertEqual(r2, "")
+
+    def test_fold_reason_drops_trailing_content_dump(self):
+        filt = HarmonyFilter(assume_analysis=True, fold_reasoning=True)
+        streamed, _ = filt.fold_out(*filt.push("Hello world"))
+        self.assertEqual(streamed, "Hello world")
+        dump, reason = filt.fold_out(*filt.push("Hello world"))
+        self.assertEqual(dump, "")
+        self.assertEqual(reason, "")
+        extra, _ = filt.fold_out(*filt.flush())
+        self.assertEqual(extra, "")
+
+    def test_fold_reason_native_reasoning_delta(self):
+        filt = HarmonyFilter(fold_reasoning=True)
+        out = rewrite_completion_payload(
+            {"choices": [{"delta": {"reasoning_content": "Hello"}}]},
+            filt=filt,
+        )
+        delta = out["choices"][0]["delta"]
+        self.assertEqual(delta.get("content"), "Hello")
+        self.assertNotIn("reasoning_content", delta)
+        dumped = rewrite_completion_payload(
+            {"choices": [{"delta": {"content": "Hello"}}]},
+            filt=filt,
+        )
+        # Replay dump is dropped entirely.
+        self.assertEqual(dumped.get("choices"), [])
+
+    def test_filter_text_fold_reason(self):
+        content, reasoning = filter_text("Hello from MiniMax.", assume_analysis=True, fold_reasoning=True)
+        self.assertEqual(content, "Hello from MiniMax.")
+        self.assertEqual(reasoning, "")
+
+    def test_fold_reason_strips_think_tags_into_content(self):
+        content, reasoning = filter_text(
+            "plan the answer</think>\nDone.",
+            assume_analysis=True,
+            fold_reasoning=True,
+        )
+        self.assertIn("plan the answer", content)
+        self.assertIn("Done.", content)
+        self.assertNotIn("</think>", content)
+        self.assertEqual(reasoning, "")
+
