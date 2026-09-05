@@ -33,6 +33,21 @@ class PrefsTests(unittest.TestCase):
             self.assertEqual(loaded["engineByModel"]["thetom-ai/MiniMax-M3-ConfigI-MLX"], "lm")
             self.assertNotIn("bad", loaded["engineByModel"])
 
+    def test_locked_by_model_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "studio.json"
+            save_prefs(
+                {
+                    "lockedByModel": {
+                        "mlx-community/Keep-Me": True,
+                        "skip": False,
+                    }
+                },
+                path=path,
+            )
+            loaded = load_prefs(path)
+            self.assertEqual(loaded["lockedByModel"], {"mlx-community/Keep-Me": True})
+
     def test_empty_payload_does_not_invent_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "studio.json"

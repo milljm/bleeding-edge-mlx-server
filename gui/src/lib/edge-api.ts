@@ -147,7 +147,17 @@ export type StudioPrefs = {
   watchDirs: string[];
   flagsByModel: Record<string, FlagValues>;
   engineByModel: Partial<Record<string, EngineKind>>;
+  lockedByModel: Record<string, boolean>;
 };
+
+function asLocked(raw: unknown): Record<string, boolean> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key && value === true) out[key] = true;
+  }
+  return out;
+}
 
 export async function getPrefs(): Promise<StudioPrefs> {
   const res = await fetch("/v1/prefs");
@@ -157,6 +167,7 @@ export async function getPrefs(): Promise<StudioPrefs> {
     flagsByModel: body.flagsByModel && typeof body.flagsByModel === "object" ? body.flagsByModel : {},
     engineByModel:
       body.engineByModel && typeof body.engineByModel === "object" ? body.engineByModel : {},
+    lockedByModel: asLocked(body.lockedByModel),
   };
 }
 
@@ -172,6 +183,7 @@ export async function putPrefs(prefs: StudioPrefs): Promise<StudioPrefs> {
     flagsByModel: body.flagsByModel && typeof body.flagsByModel === "object" ? body.flagsByModel : prefs.flagsByModel,
     engineByModel:
       body.engineByModel && typeof body.engineByModel === "object" ? body.engineByModel : prefs.engineByModel,
+    lockedByModel: asLocked(body.lockedByModel ?? prefs.lockedByModel),
   };
 }
 
