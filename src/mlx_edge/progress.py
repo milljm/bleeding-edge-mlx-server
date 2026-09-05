@@ -241,6 +241,7 @@ class ProgressTracker:
         self._cv = threading.Condition(self._lock)
         self._models: dict[str, dict[str, Any]] = {}
         self._seq = 0
+        self._generated_at = now()
         self._linger = linger
         self._timers: dict[str, threading.Timer] = {}
 
@@ -474,6 +475,7 @@ class ProgressTracker:
     def snapshot(self, needle: str | None = None) -> dict[str, Any]:
         with self._lock:
             rows = list(self._models.values())
+            generated_at = self._generated_at
         if needle:
             rows = [row for row in rows if _ids_match(str(row.get("id") or ""), needle)]
         active = any(row.get("status") == "processing" for row in rows)
@@ -488,7 +490,7 @@ class ProgressTracker:
         return {
             "object": OBJECT,
             "version": SCHEMA_VERSION,
-            "generated_at": now(),
+            "generated_at": generated_at,
             "active": active,
             "progress": round(float(overall), 4),
             "models": publics,
@@ -558,4 +560,5 @@ class ProgressTracker:
 
     def _bump(self) -> None:
         self._seq += 1
+        self._generated_at = now()
         self._cv.notify_all()

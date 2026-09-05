@@ -1,4 +1,4 @@
-import { type UIEvent, useEffect, useRef, useState } from "react";
+import { type UIEvent, memo, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUp, Square, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,6 +17,7 @@ import {
   type ModelProgress,
   type PlaygroundMetrics,
   type PlaygroundTurn,
+  type PromptProgress,
 } from "@/lib/edge-api";
 import { loadTarget, publicName } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
@@ -297,10 +298,18 @@ function ChatPlayground({ live }: { live: boolean }) {
     }
   }
 
-  async function rewind(index: number) {
-    if (stopping) await halt();
+  const rewind = useCallback(async (index: number) => {
+    abortRef.current?.abort();
+    const selected = useStudio.getState().selected();
+    if (selected) {
+      try {
+        await postStop(loadTarget(selected));
+      } catch {
+        /* already gone */
+      }
+    }
     setTurns((prev) => prev.slice(0, index));
-  }
+  }, []);
 
   async function reset() {
     if (stopping) await halt();
@@ -502,56 +511,16 @@ function ChatPlayground({ live }: { live: boolean }) {
           </p>
         ) : (
           turns.map((turn, i) => (
-            <article
+            <TurnCard
               key={`${turn.role}-${i}`}
-              className={cn(
-                "group relative rounded-2xl px-4 py-3 pr-10 text-sm",
-                turn.role === "user"
-                  ? "ml-auto max-w-[85%] bg-secondary text-foreground"
-                  : "mr-auto w-full max-w-full bg-card shadow-[var(--shadow-border)]",
-              )}
-            >
-              <button
-                type="button"
-                className="absolute top-2 right-2 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
-                aria-label="Delete this message and everything after"
-                title="Delete from here"
-                onClick={() => void rewind(i)}
-              >
-                <X className="size-3.5" />
-              </button>
-              <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {turn.role === "assistant" && turn.thinking && !turn.text ? "thinking" : turn.role}
-              </p>
-              {turn.role === "assistant" && !turn.text && !turn.thinking && prefill ? (
-                <PrefillMeter
-                  processed={prefill.processed_tokens}
-                  total={prefill.total_tokens}
-                  pct={prefillPct}
-                />
-              ) : (
-                <>
-                  {turn.thinking ? (
-                    <p className="mb-2 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic">
-                      {turn.thinking}
-                    </p>
-                  ) : null}
-                  {turn.text ? (
-                    <div className="leading-relaxed">
-                      <Markdown text={turn.text} />
-                      {stopping && i === turns.length - 1 && turn.role === "assistant" ? (
-                        <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
-                      ) : null}
-                    </div>
-                  ) : stopping && i === turns.length - 1 && turn.role === "assistant" ? (
-                    <span className="inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
-                  ) : null}
-                  {turn.role === "assistant" && turn.metrics && !(stopping && i === turns.length - 1) ? (
-                    <MetricsLine metrics={turn.metrics} />
-                  ) : null}
-                </>
-              )}
-            </article>
+              turn={turn}
+              index={i}
+              last={i === turns.length - 1}
+              stopping={stopping && i === turns.length - 1}
+              prefill={i === turns.length - 1 ? prefill : null}
+              prefillPct={i === turns.length - 1 ? prefillPct : null}
+              onRewind={rewind}
+            />
           ))
         )}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -591,6 +560,76 @@ function ChatPlayground({ live }: { live: boolean }) {
     </div>
   );
 }
+
+const TurnCard = memo(function TurnCard({
+  turn,
+  index,
+  last,
+  stopping,
+  prefill,
+  prefillPct,
+  onRewind,
+}: {
+  turn: ChatTurn;
+  index: number;
+  last: boolean;
+  stopping: boolean;
+  prefill: PromptProgress | null;
+  prefillPct: number | null;
+  onRewind: (index: number) => void | Promise<void>;
+}) {
+  return (
+    <article
+      className={cn(
+        "group relative rounded-2xl px-4 py-3 pr-10 text-sm",
+        turn.role === "user"
+          ? "ml-auto max-w-[85%] bg-secondary text-foreground"
+          : "mr-auto w-full max-w-full bg-card shadow-[var(--shadow-border)]",
+      )}
+    >
+      <button
+        type="button"
+        className="absolute top-2 right-2 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100"
+        aria-label="Delete this message and everything after"
+        title="Delete from here"
+        onClick={() => void onRewind(index)}
+      >
+        <X className="size-3.5" />
+      </button>
+      <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+        {turn.role === "assistant" && turn.thinking && !turn.text ? "thinking" : turn.role}
+      </p>
+      {turn.role === "assistant" && !turn.text && !turn.thinking && prefill ? (
+        <PrefillMeter
+          processed={prefill.processed_tokens}
+          total={prefill.total_tokens}
+          pct={prefillPct}
+        />
+      ) : (
+        <>
+          {turn.thinking ? (
+            <p className="mb-2 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic">
+              {turn.thinking}
+            </p>
+          ) : null}
+          {turn.text ? (
+            <div className="leading-relaxed">
+              <Markdown text={turn.text} />
+              {stopping && last && turn.role === "assistant" ? (
+                <span className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
+              ) : null}
+            </div>
+          ) : stopping && last && turn.role === "assistant" ? (
+            <span className="inline-block h-3 w-0.5 animate-pulse bg-foreground align-middle" />
+          ) : null}
+          {turn.role === "assistant" && turn.metrics && !(stopping && last) ? (
+            <MetricsLine metrics={turn.metrics} />
+          ) : null}
+        </>
+      )}
+    </article>
+  );
+});
 
 function PrefillMeter({
   processed,
