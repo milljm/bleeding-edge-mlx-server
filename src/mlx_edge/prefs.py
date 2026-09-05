@@ -11,7 +11,7 @@ ENGINES = {"lm", "vlm", "embed", "tts", "stt", "rerank", "image"}
 
 
 def empty_prefs() -> dict[str, Any]:
-    return {"watchDirs": [], "flagsByModel": {}, "engineByModel": {}}
+    return {"watchDirs": [], "flagsByModel": {}, "engineByModel": {}, "lockedByModel": {}}
 
 
 def load_prefs(path: Path | None = None) -> dict[str, Any]:
@@ -56,7 +56,14 @@ def _clean(raw: dict[str, Any]) -> dict[str, Any]:
             engine = str(value or "").strip().lower()
             if name and engine in ENGINES:
                 engines[name] = engine
-    return {"watchDirs": dirs, "flagsByModel": flags, "engineByModel": engines}
+    locked_raw = raw.get("lockedByModel") or raw.get("locked_by_model") or {}
+    locked: dict[str, bool] = {}
+    if isinstance(locked_raw, dict):
+        for key, value in locked_raw.items():
+            name = str(key).strip()
+            if name and _truthy(value):
+                locked[name] = True
+    return {"watchDirs": dirs, "flagsByModel": flags, "engineByModel": engines, "lockedByModel": locked}
 
 
 def _truthy(value: object) -> bool:

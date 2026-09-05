@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RefreshCw, RotateCcw } from "lucide-react";
+import { Lock, RefreshCw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -344,6 +344,8 @@ function TemplateCard() {
 function DeleteModelCard() {
   const model = useStudio((s) => s.selected());
   const served = useStudio((s) => s.served);
+  const lockedByModel = useStudio((s) => s.lockedByModel);
+  const setModelLocked = useStudio((s) => s.setModelLocked);
   const stopServe = useStudio((s) => s.stopServe);
   const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
   const [confirm, setConfirm] = useState(false);
@@ -356,9 +358,10 @@ function DeleteModelCard() {
   if (!model) return null;
   const origin = modelOrigin(model);
   const live = modelIsLive(served, model);
+  const locked = Boolean(lockedByModel[flagKey(model)]);
 
   async function remove() {
-    if (!model || origin !== "huggingface") return;
+    if (!model || origin !== "huggingface" || locked) return;
     setBusy(true);
     try {
       if (live) await stopServe(model.id);
@@ -384,23 +387,42 @@ function DeleteModelCard() {
 
   return (
     <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
-      <div>
-        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Delete model</h3>
-        <p className="mt-1 max-w-lg text-sm text-muted-foreground">{copy}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Delete model</h3>
+          <p className="mt-1 max-w-lg text-sm text-muted-foreground">{copy}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 pt-0.5">
+          <Lock className={cn("size-3.5", locked ? "text-foreground" : "text-muted-foreground")} />
+          <Switch
+            id="lock-delete"
+            checked={locked}
+            onCheckedChange={(checked) => {
+              setConfirm(false);
+              setModelLocked(checked);
+            }}
+            aria-label={locked ? "Unlock model" : "Lock model from deletion"}
+          />
+        </div>
       </div>
       {origin === "huggingface" ? (
         <div className="flex items-center gap-2">
           <Button
             type="button"
-            variant={confirm ? "destructive" : "secondary"}
+            variant={confirm && !locked ? "destructive" : "secondary"}
             size="sm"
-            className="shrink-0"
-            disabled={busy}
-            onClick={() => (confirm ? void remove() : setConfirm(true))}
+            className="relative shrink-0"
+            disabled={busy || locked}
+            onClick={() => {
+              if (locked) return;
+              if (confirm) void remove();
+              else setConfirm(true);
+            }}
           >
-            {busy ? "Deleting…" : "Delete"}
+            <span className={cn(locked && "opacity-30")}>{busy ? "Deleting…" : "Delete"}</span>
+            {locked ? <Lock className="absolute inset-0 m-auto size-3.5" /> : null}
           </Button>
-          {confirm ? (
+          {confirm && !locked ? (
             <Button type="button" variant="ghost" size="sm" className="shrink-0" disabled={busy} onClick={() => setConfirm(false)}>
               Cancel
             </Button>

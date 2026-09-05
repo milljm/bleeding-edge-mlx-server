@@ -29,6 +29,7 @@ type StudioState = {
   flags: FlagValues;
   flagsByModel: Record<string, FlagValues>;
   engineByModel: Partial<Record<string, EngineKind>>;
+  lockedByModel: Record<string, boolean>;
   served: ServedRuntime[];
   gateway: GatewayInfo;
   tab: StudioTab;
@@ -47,12 +48,14 @@ type StudioState = {
   setFlag: (key: string, value: string | number | boolean) => void;
   resetFlags: () => void;
   setEngineOverride: (engine: EngineKind | null) => void;
+  setModelLocked: (locked: boolean) => void;
   setTab: (tab: StudioTab) => void;
   setHydrated: () => void;
   applyPrefs: (prefs: {
     watchDirs?: string[];
     flagsByModel?: Record<string, FlagValues>;
     engineByModel?: Partial<Record<string, EngineKind>>;
+    lockedByModel?: Record<string, boolean>;
   }) => void;
   persistPrefs: () => Promise<void>;
   scanWatchDirs: () => Promise<void>;
@@ -121,6 +124,7 @@ export const useStudio = create<StudioState>()(
       flags: defaultFlags(),
       flagsByModel: {},
       engineByModel: {},
+      lockedByModel: {},
       served: [],
       gateway: DEFAULT_GATEWAY,
       tab: "settings",
@@ -181,6 +185,16 @@ export const useStudio = create<StudioState>()(
         set({ engineByModel, models, flags });
         void get().persistPrefs();
       },
+      setModelLocked: (locked) => {
+        const model = get().selected();
+        if (!model) return;
+        const key = flagKey(model);
+        const lockedByModel = { ...get().lockedByModel };
+        if (locked) lockedByModel[key] = true;
+        else delete lockedByModel[key];
+        set({ lockedByModel });
+        void get().persistPrefs();
+      },
       setTab: (tab) => set({ tab }),
       setHydrated: () => set({ hydrated: true }),
       applyPrefs: (prefs) => {
@@ -188,16 +202,17 @@ export const useStudio = create<StudioState>()(
         const watchDirs = fromServer.length ? fromServer : migrateWatchDirs(get().watchDirs);
         const flagsByModel = { ...get().flagsByModel, ...(prefs.flagsByModel ?? {}) };
         const engineByModel = { ...get().engineByModel, ...(prefs.engineByModel ?? {}) };
+        const lockedByModel = { ...get().lockedByModel, ...(prefs.lockedByModel ?? {}) };
         const models = applyEngineOverrides(get().models, engineByModel);
         const model = models.find((m) => m.id === get().selectedId);
         const flags = flagsForModel(model, model ? flagsByModel[flagKey(model)] : get().flags);
-        set({ watchDirs, flagsByModel, engineByModel, models, flags });
+        set({ watchDirs, flagsByModel, engineByModel, lockedByModel, models, flags });
       },
       persistPrefs: async () => {
         if (!get().hydrated) return;
-        const { watchDirs, flagsByModel, engineByModel } = get();
+        const { watchDirs, flagsByModel, engineByModel, lockedByModel } = get();
         try {
-          await putPrefs({ watchDirs, flagsByModel, engineByModel });
+          await putPrefs({ watchDirs, flagsByModel, engineByModel, lockedByModel });
         } catch {
           /* preview without a gateway still keeps localStorage */
         }
@@ -320,6 +335,7 @@ export const useStudio = create<StudioState>()(
         selectedId: s.selectedId,
         flagsByModel: s.flagsByModel,
         engineByModel: s.engineByModel,
+        lockedByModel: s.lockedByModel,
         flags: s.flags,
       }),
       merge: (persisted, current) => {
@@ -331,6 +347,7 @@ export const useStudio = create<StudioState>()(
           watchDirs: persistedDirs.length ? persistedDirs : current.watchDirs,
           flagsByModel: p.flagsByModel ?? current.flagsByModel,
           engineByModel: p.engineByModel ?? current.engineByModel,
+          lockedByModel: p.lockedByModel ?? current.lockedByModel,
           hydrated: false,
         };
       },
@@ -339,6 +356,7 @@ export const useStudio = create<StudioState>()(
         state.watchDirs = migrateWatchDirs(state.watchDirs);
         state.flagsByModel = state.flagsByModel ?? {};
         state.engineByModel = state.engineByModel ?? {};
+        state.lockedByModel = state.lockedByModel ?? {};
         state.flags = mergeFlags(state.flags);
         const next = catalog([], [], state.selectedId);
         state.scanned = [];
