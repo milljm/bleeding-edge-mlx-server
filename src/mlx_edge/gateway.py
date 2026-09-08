@@ -1050,7 +1050,7 @@ def _proxy_to(
     model_id = item.public_id
     sse_open = False
     last_beat = time.time()
-    conn = http.client.HTTPConnection("127.0.0.1", item.port, timeout=600)
+    conn = http.client.HTTPConnection("127.0.0.1", item.port, timeout=None)
     try:
         if stream:
             _open_sse(handler, item.public_id)
@@ -1060,7 +1060,6 @@ def _proxy_to(
         if job is not None:
             job.set_close(conn.close)
         conn.request("POST", handler.path, body=body, headers=headers)
-        deadline = time.time() + 600
         while True:
             state = _wait_io(conn.sock, handler, job)
             if state == "data":
@@ -1081,8 +1080,6 @@ def _proxy_to(
                         logs.append(model_id, item.engine, "Client disconnected — stopping generation")
                     return
                 last_beat = time.time()
-            if time.time() > deadline:
-                raise TimeoutError("engine timed out")
         resp = conn.getresponse()
         content_type = resp.getheader("Content-Type") or "application/json"
         is_stream = stream or "text/event-stream" in content_type.lower()
@@ -1204,7 +1201,6 @@ def _arm_timeout(sock: socket.socket | None, seconds: float) -> None:
 def _read_body(resp: http.client.HTTPResponse, handler: BaseHTTPRequestHandler, job: Inflight | None, child_sock: socket.socket | None) -> bytes | None:
     _arm_timeout(child_sock, 0.2)
     chunks: list[bytes] = []
-    deadline = time.time() + 600
     while True:
         if job is not None and job.abort.is_set():
             return None
@@ -1215,8 +1211,6 @@ def _read_body(resp: http.client.HTTPResponse, handler: BaseHTTPRequestHandler, 
         try:
             chunk = resp.read(65536)
         except TimeoutError:
-            if time.time() > deadline:
-                raise TimeoutError("engine timed out")
             continue
         except (OSError, http.client.HTTPException):
             if job is not None and job.abort.is_set():
