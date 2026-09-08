@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { highlightCode, normalizeLang } from "@/lib/chat/highlight";
 import { parseTableAt, type MdTable, type TableAlign } from "@/lib/chat/md-table";
@@ -786,11 +786,18 @@ function MarkdownTable({ table, ctx }: { table: MdTable; ctx: MdCtx }) {
   );
 }
 
-function CodeBlock({ lang, body, file }: { lang: string; body: string; file: string | null }) {
+const CodeBlock = memo(function CodeBlock({ lang, body, file }: { lang: string; body: string; file: string | null }) {
   const name = normalizeLang(lang);
+  const html = useMemo(() => highlightCode(body, name), [body, name]);
+  const codeRef = useRef<HTMLElement>(null);
   const [copied, setCopied] = useState(false);
   const [syntax, setSyntax] = useSyntaxPref();
   const label = file || (name && name !== "text" ? name : "code");
+
+  useLayoutEffect(() => {
+    const el = codeRef.current;
+    if (el && el.innerHTML !== html) el.innerHTML = html;
+  }, [html]);
 
   async function copy() {
     try {
@@ -833,11 +840,11 @@ function CodeBlock({ lang, body, file }: { lang: string; body: string; file: str
         </div>
       </div>
       <pre className="overflow-x-auto p-3 font-mono text-xs leading-relaxed">
-        <code dangerouslySetInnerHTML={{ __html: highlightCode(body, name) }} />
+        <code ref={codeRef} />
       </pre>
     </div>
   );
-}
+});
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -845,7 +852,7 @@ function escapeRe(s: string): string {
 
 const OPEN_FENCE = /^( {0,3})(`{3,}|~{3,})([^\n]*)$/;
 
-export function Markdown({ text, className }: { text: string; className?: string }) {
+export const Markdown = memo(function Markdown({ text, className }: { text: string; className?: string }) {
   const source = typeof text === "string" ? text : String(text ?? "");
   const lines = source.split("\n");
   const nodes: ReactNode[] = [];
@@ -938,4 +945,4 @@ export function Markdown({ text, className }: { text: string; className?: string
       {nodes.length ? nodes : <Fragment>{inline(source, ctx)}</Fragment>}
     </div>
   );
-}
+});

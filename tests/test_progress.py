@@ -57,6 +57,18 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(snap["progress"], 0.0)
         self.assertFalse(snap["active"])
 
+    def test_idle_snapshot_keeps_generated_at(self):
+        tracker = ProgressTracker(linger=0)
+        tracker.ensure("m", "lm")
+        first = tracker.snapshot()
+        second = tracker.snapshot()
+        self.assertEqual(first["generated_at"], second["generated_at"])
+        self.assertEqual(first["models"], second["models"])
+        tracker.begin("m", "lm", stream=True)
+        third = tracker.snapshot()
+        self.assertGreaterEqual(third["generated_at"], first["generated_at"])
+        self.assertTrue(third["active"])
+
     def test_sse_buffer_split_across_chunks(self):
         tracker = ProgressTracker(linger=0)
         tracker.begin("m", "lm", stream=True)

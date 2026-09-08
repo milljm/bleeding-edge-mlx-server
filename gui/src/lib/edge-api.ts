@@ -428,9 +428,14 @@ export async function getProgress(model?: string): Promise<ProgressSnapshot> {
 /** EventSource for `GET /v1/progress/stream`. Same snapshot as `getProgress`. */
 export function subscribeProgress(onSnap: (snap: ProgressSnapshot) => void): () => void {
   const es = new EventSource("/v1/progress/stream");
+  let last = "";
   es.onmessage = (ev) => {
     try {
-      onSnap(normalizeProgress(JSON.parse(String(ev.data || "{}")) as Partial<ProgressSnapshot>));
+      const snap = normalizeProgress(JSON.parse(String(ev.data || "{}")) as Partial<ProgressSnapshot>);
+      const key = JSON.stringify({ active: snap.active, progress: snap.progress, models: snap.models });
+      if (key === last) return;
+      last = key;
+      onSnap(snap);
     } catch {
       /* skip a torn frame */
     }
