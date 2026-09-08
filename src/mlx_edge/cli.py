@@ -464,7 +464,7 @@ def _post_gateway(url: str, path: str, payload: dict[str, Any]) -> tuple[int, di
         headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
     )
     try:
-        with urllib.request.urlopen(req, timeout=600) as resp:
+        with urllib.request.urlopen(req, timeout=None) as resp:
             body = json.loads(resp.read().decode("utf-8") or "{}")
             return resp.status, body if isinstance(body, dict) else {}
     except urllib.error.HTTPError as exc:

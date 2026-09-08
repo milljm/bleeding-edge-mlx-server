@@ -62,6 +62,11 @@ _QUIET_ACCESS = re.compile(r"\b(?:GET|HEAD) /v1/(?:progress|logs|hub/progress|ho
 # client socket alive without looking like tokens.
 HEARTBEAT_INTERVAL = 2.0
 
+# Generation has no wall clock. Prefill of a 100k+ prompt can take longer than
+# any number we used to pick (5 min, then 10). None = wait until the client
+# hangs up or POST /v1/stop. Do not put a deadline back.
+ENGINE_TIMEOUT = None
+
 
 def _quiet_access(line: str) -> bool:
     return bool(_QUIET_ACCESS.search(line))
@@ -171,6 +176,8 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
     playground = PlaygroundStore()
 
     class GatewayHandler(BaseHTTPRequestHandler):
+        timeout = ENGINE_TIMEOUT
+
         def log_message(self, fmt: str, *args: object) -> None:
             try:
                 rendered = fmt % args
@@ -1050,7 +1057,7 @@ def _proxy_to(
     model_id = item.public_id
     sse_open = False
     last_beat = time.time()
-    conn = http.client.HTTPConnection("127.0.0.1", item.port, timeout=600)
+    conn = http.client.HTTPConnection("127.0.0.1", item.port, timeout=ENGINE_TIMEOUT)
     try:
         if stream:
             _open_sse(handler, item.public_id)
@@ -1060,7 +1067,6 @@ def _proxy_to(
         if job is not None:
             job.set_close(conn.close)
         conn.request("POST", handler.path, body=body, headers=headers)
-        deadline = time.time() + 600
         while True:
             state = _wait_io(conn.sock, handler, job)
             if state == "data":
@@ -1081,8 +1087,6 @@ def _proxy_to(
                         logs.append(model_id, item.engine, "Client disconnected — stopping generation")
                     return
                 last_beat = time.time()
-            if time.time() > deadline:
-                raise TimeoutError("engine timed out")
         resp = conn.getresponse()
         content_type = resp.getheader("Content-Type") or "application/json"
         is_stream = stream or "text/event-stream" in content_type.lower()
@@ -1204,7 +1208,6 @@ def _arm_timeout(sock: socket.socket | None, seconds: float) -> None:
 def _read_body(resp: http.client.HTTPResponse, handler: BaseHTTPRequestHandler, job: Inflight | None, child_sock: socket.socket | None) -> bytes | None:
     _arm_timeout(child_sock, 0.2)
     chunks: list[bytes] = []
-    deadline = time.time() + 600
     while True:
         if job is not None and job.abort.is_set():
             return None
@@ -1215,8 +1218,6 @@ def _read_body(resp: http.client.HTTPResponse, handler: BaseHTTPRequestHandler, 
         try:
             chunk = resp.read(65536)
         except TimeoutError:
-            if time.time() > deadline:
-                raise TimeoutError("engine timed out")
             continue
         except (OSError, http.client.HTTPException):
             if job is not None and job.abort.is_set():
@@ -1411,6 +1412,7 @@ def serve_forever(
     static_dir: Path | str | None = None,
 ) -> None:
     httpd = ThreadingHTTPServer((host, port), make_handler(pool, static_dir=static_dir))
+    httpd.timeout = ENGINE_TIMEOUT
     try:
         httpd.serve_forever()
     finally:
