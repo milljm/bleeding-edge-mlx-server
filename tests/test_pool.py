@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import unittest
 import urllib.error
 from unittest import mock
@@ -9,6 +10,7 @@ from mlx_edge.pool import (
     ModelPool,
     annotate_load_error,
     basename_id,
+    child_env,
     names_match,
     server_argv,
     spawn_argv,
@@ -53,6 +55,16 @@ class PoolTests(unittest.TestCase):
         self.assertIsNotNone(item)
         self.assertEqual(item.public_id, "MiniMax-M2.7-ConfigI-MLX")
         self.assertTrue(names_match("MiniMax-M2.7-ConfigI-MLX", "minimax-m2.7-configi-mlx"))
+
+    def test_vlm_child_disables_token_queue_timeout(self):
+        with mock.patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("MLX_VLM_TOKEN_QUEUE_TIMEOUT", None)
+            vlm = child_env("vlm")
+            lm = child_env("lm")
+        self.assertEqual(vlm["MLX_VLM_TOKEN_QUEUE_TIMEOUT"], "0")
+        self.assertNotIn("MLX_VLM_TOKEN_QUEUE_TIMEOUT", lm)
+        with mock.patch.dict("os.environ", {"MLX_VLM_TOKEN_QUEUE_TIMEOUT": "120"}):
+            self.assertEqual(child_env("vlm")["MLX_VLM_TOKEN_QUEUE_TIMEOUT"], "120")
 
     def test_openai_id_is_basename(self):
         pool = self._pool()
