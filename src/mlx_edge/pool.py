@@ -252,13 +252,24 @@ class LoadedModel:
 
 SpawnFn = Callable[[str, str, int, list[str]], subprocess.Popen[bytes] | None]
 
+# mlx-vlm.server waits this many seconds for the next token. Default 600, which
+# kills a long prefill before first token. 0 disables it (mlx-vlm treats ≤0 as
+# None). Leave the user's value if they already exported one.
+VLM_QUEUE_TIMEOUT_ENV = "MLX_VLM_TOKEN_QUEUE_TIMEOUT"
 
-def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> subprocess.Popen[bytes]:
+
+def child_env(engine_id: str) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    if engine_id in {"vlm", "embed", "tts", "stt", "rerank", "image"}:
+        env.setdefault(VLM_QUEUE_TIMEOUT_ENV, "0")
+    return env
+
+
+def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> subprocess.Popen[bytes]:
     cmd = spawn_argv(engine_id, model, port, extra)
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env(engine_id))
 
 
 def warmup_engine(item: LoadedModel, timeout: float = 120.0) -> None:
