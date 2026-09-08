@@ -62,6 +62,11 @@ _QUIET_ACCESS = re.compile(r"\b(?:GET|HEAD) /v1/(?:progress|logs|hub/progress|ho
 # client socket alive without looking like tokens.
 HEARTBEAT_INTERVAL = 2.0
 
+# Generation has no wall clock. Prefill of a 100k+ prompt can take longer than
+# any number we used to pick (5 min, then 10). None = wait until the client
+# hangs up or POST /v1/stop. Do not put a deadline back.
+ENGINE_TIMEOUT = None
+
 
 def _quiet_access(line: str) -> bool:
     return bool(_QUIET_ACCESS.search(line))
@@ -171,6 +176,8 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
     playground = PlaygroundStore()
 
     class GatewayHandler(BaseHTTPRequestHandler):
+        timeout = ENGINE_TIMEOUT
+
         def log_message(self, fmt: str, *args: object) -> None:
             try:
                 rendered = fmt % args
@@ -1050,7 +1057,7 @@ def _proxy_to(
     model_id = item.public_id
     sse_open = False
     last_beat = time.time()
-    conn = http.client.HTTPConnection("127.0.0.1", item.port, timeout=None)
+    conn = http.client.HTTPConnection("127.0.0.1", item.port, timeout=ENGINE_TIMEOUT)
     try:
         if stream:
             _open_sse(handler, item.public_id)
@@ -1405,6 +1412,7 @@ def serve_forever(
     static_dir: Path | str | None = None,
 ) -> None:
     httpd = ThreadingHTTPServer((host, port), make_handler(pool, static_dir=static_dir))
+    httpd.timeout = ENGINE_TIMEOUT
     try:
         httpd.serve_forever()
     finally:
