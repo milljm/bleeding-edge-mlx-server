@@ -102,23 +102,99 @@ def strip_reasoning_fields(obj: dict[str, Any]) -> None:
         obj.pop(key, None)
 
 
-def _next_tag(buf: str) -> tuple[int, int, str, str] | None:
-    hits: list[tuple[int, int, str, str]] = []
-    for rx, kind in ((TOKEN, "harmony"), (THINK_OPEN, "think_open"), (THINK_CLOSE, "think_close")):
-        match = rx.search(buf)
-        if match:
-            hits.append((match.start(), match.end(), kind, match.group(0)))
-    if not hits:
-        return None
-    hits.sort(key=lambda row: row[0])
-    return hits[0]
+def _advance_code(
+    text: str, fence: bool = False, inline_run: int = 0, bol: bool = True
+) -> tuple[bool, int, bool]:
+    i = 0
+    n = len(text)
+    while i < n:
+        if fence:
+            if text.startswith("```", i):
+                fence = False
+                i += 3
+                bol = False
+                continue
+            bol = text[i] == "\n"
+            i += 1
+            continue
+        if inline_run:
+            if text[i] == "`":
+                j = i
+                while j < n and text[j] == "`":
+                    j += 1
+                if j - i == inline_run:
+                    inline_run = 0
+                    i = j
+                    bol = False
+                    continue
+                i = j
+                bol = False
+                continue
+            bol = text[i] == "\n"
+            i += 1
+            continue
+        if text[i] == "`":
+            j = i
+            while j < n and text[j] == "`":
+                j += 1
+            run = j - i
+            at_line = bol if i == 0 else text[i - 1] == "\n"
+            if run >= 3 and at_line:
+                fence = True
+                i = j
+                bol = False
+                continue
+            inline_run = run
+            i = j
+            bol = False
+            continue
+        bol = text[i] == "\n"
+        i += 1
+    return fence, inline_run, bol
 
 
-def _incomplete_start(buf: str) -> int | None:
+def _in_markdown_code(
+    buf: str, at: int, fence: bool = False, inline_run: int = 0, bol: bool = True
+) -> bool:
+    """True if index ``at`` sits inside a fenced block or inline code span.
+
+    Models often *talk about* ``<think>`` / Harmony tokens inside backticks.
+    Those must stay in the reply, not switch channels.
+    """
+    fence, inline_run, _ = _advance_code(buf[: max(at, 0)], fence, inline_run, bol)
+    return fence or bool(inline_run)
+
+
+def _next_tag(
+    buf: str, fence: bool = False, inline_run: int = 0, bol: bool = True
+) -> tuple[int, int, str, str] | None:
+    pos = 0
+    while pos < len(buf):
+        hits: list[tuple[int, int, str, str]] = []
+        for rx, kind in ((TOKEN, "harmony"), (THINK_OPEN, "think_open"), (THINK_CLOSE, "think_close")):
+            match = rx.search(buf, pos)
+            if match:
+                hits.append((match.start(), match.end(), kind, match.group(0)))
+        if not hits:
+            return None
+        hits.sort(key=lambda row: row[0])
+        start, end, kind, raw = hits[0]
+        if _in_markdown_code(buf, start, fence, inline_run, bol):
+            pos = end
+            continue
+        return start, end, kind, raw
+    return None
+
+
+def _incomplete_start(
+    buf: str, fence: bool = False, inline_run: int = 0, bol: bool = True
+) -> int | None:
     match = INCOMPLETE.search(buf)
     special = incomplete_special_start(buf)
     starts = []
-    if match and match.end() == len(buf):
+    if match and match.end() == len(buf) and not _in_markdown_code(
+        buf, match.start(), fence, inline_run, bol
+    ):
         starts.append(match.start())
     if special is not None:
         starts.append(special)
@@ -154,6 +230,13 @@ class HarmonyFilter:
         self.saw_tools = False
         self._content_rep = LiteralReplacer(replace_content)
         self._reason_rep = LiteralReplacer(replace_reasoning)
+        self._fence = False
+        self._inline_run = 0
+        self._bol = True
+        # Set once the engine streams on delta.reasoning / reasoning_content.
+        # After that, content is the user-visible reply — do not mine it for
+        # think/Harmony tags (models talk about ``<think>`` in prose).
+        self.seen_native_reason = False
 
     def _rewrite_channels(self, content: str, reasoning: str, flush: bool = False) -> tuple[str, str]:
         content = self._content_rep.push(content or "")
@@ -212,12 +295,14 @@ class HarmonyFilter:
     def push(self, text: str) -> tuple[str, str]:
         if not text:
             return "", ""
+        if self.seen_native_reason:
+            return self._push_user_content(text)
         self.buf += text
         self.buf = normalize_minimax_text(self.buf)
         content: list[str] = []
         reasoning: list[str] = []
         while self.buf:
-            tag = _next_tag(self.buf)
+            tag = _next_tag(self.buf, self._fence, self._inline_run, self._bol)
             if tag:
                 start, end, kind, raw = tag
                 self._emit(self.buf[:start], content, reasoning)
@@ -231,7 +316,7 @@ class HarmonyFilter:
                     self.mode = "content"
                 self.buf = self.buf[end:]
                 continue
-            hold = _incomplete_start(self.buf)
+            hold = _incomplete_start(self.buf, self._fence, self._inline_run, self._bol)
             tool_hold = self._tool_hold_index()
             cuts = [i for i in (hold, tool_hold) if i is not None]
             if cuts:
@@ -287,7 +372,28 @@ class HarmonyFilter:
         return self._rewrite_channels(content_s, reasoning_s, flush=True)
 
     def feed_reasoning(self, text: str) -> str:
+        if text:
+            self.seen_native_reason = True
         return self._reason_rep.push(text or "")
+
+    def _push_user_content(self, text: str) -> tuple[str, str]:
+        """Content after a native reasoning stream is the reply — no think split."""
+        self.mode = "content"
+        self.buf += text
+        chunk = self.buf
+        hold = self._tool_hold_index() if self.parse_tools else None
+        if hold is not None:
+            if hold > 0:
+                visible, extra = extract_tool_markup(chunk[:hold]) if self.parse_tools else (chunk[:hold], [])
+                self._add_tools(extra)
+                self.buf = chunk[hold:]
+                return self._rewrite_channels(visible, "")
+            return "", ""
+        self.buf = ""
+        if self.parse_tools:
+            chunk, extra = extract_tool_markup(chunk)
+            self._add_tools(extra)
+        return self._rewrite_channels(chunk, "")
 
     def _tool_hold_index(self) -> int | None:
         """Hold an unclosed tool block only in the *answer*, never while thinking.
@@ -362,6 +468,10 @@ class HarmonyFilter:
     def _emit(self, text: str, content: list[str], reasoning: list[str]) -> None:
         if not text:
             return
+        if self.mode not in {"skip_channel", "skip_constrain", "skip_role"}:
+            self._fence, self._inline_run, self._bol = _advance_code(
+                text, self._fence, self._inline_run, self._bol
+            )
         if self.mode == "skip_channel":
             self._channel_header += text
             return
@@ -443,10 +553,11 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
     """Rewrite an OpenAI delta in-place. Returns the delta, or None to drop the event."""
     raw = delta.get("content")
     native_in = native_reasoning(delta)
+    native_out = filt.feed_reasoning(native_in) if native_in else ""
     if isinstance(raw, str):
         content, reasoning = filt.push(raw)
-        if native_in and not reasoning:
-            reasoning = filt.feed_reasoning(native_in)
+        if native_out:
+            reasoning = native_out + (reasoning or "")
         out: dict[str, Any] = {k: v for k, v in delta.items() if k != "content"}
         strip_reasoning_fields(out)
         if reasoning:
@@ -458,15 +569,14 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
     else:
         out = dict(delta)
         if native_in:
-            rewritten = filt.feed_reasoning(native_in)
             for key in REASON_KEYS:
                 if key in out:
-                    if rewritten:
-                        out[key] = rewritten
+                    if native_out:
+                        out[key] = native_out
                     else:
                         out.pop(key, None)
-            if rewritten and "reasoning_content" not in out:
-                out["reasoning_content"] = rewritten
+            if native_out and "reasoning_content" not in out:
+                out["reasoning_content"] = native_out
     if filt.fold_reasoning:
         folded_c = out.get("content") if isinstance(out.get("content"), str) else ""
         folded_r = native_reasoning(out)
