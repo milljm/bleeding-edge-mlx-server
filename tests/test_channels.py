@@ -5,6 +5,7 @@ from mlx_edge.channels import (
     HarmonyFilter,
     assume_think_start,
     filter_text,
+    rewrite_choice_delta,
     rewrite_completion_payload,
     rewrite_message,
 )
@@ -321,4 +322,36 @@ class ChannelTests(unittest.TestCase):
         self.assertIn("Done.", content)
         self.assertNotIn("<think>", content)
         self.assertNotIn("</think>", content)
+
+    def test_native_reasoning_leaves_content_literal(self):
+        filt = HarmonyFilter()
+        self.assertEqual(filt.feed_reasoning("Let me consider"), "Let me consider")
+        content, reasoning = filt.push(
+            "The `<think>` tags were used in training so the model always had a designated scratch space.\n"
+            "- **Chat templates** typically force `<think>` open and emit `</think>`.\n"
+            "- **Serving stacks** (vLLM, llama.cpp, etc.) use \"reasoning parsers\""
+        )
+        more, extra_r = filt.flush()
+        blob = content + more
+        self.assertEqual(reasoning + extra_r, "")
+        self.assertIn("`<think>`", blob)
+        self.assertIn("`</think>`", blob)
+        self.assertIn("Serving stacks", blob)
+        self.assertIn("Chat templates", blob)
+
+    def test_native_reasoning_then_content_delta(self):
+        filt = HarmonyFilter()
+        think = rewrite_choice_delta({"reasoning_content": "plan"}, filt)
+        self.assertEqual(think.get("reasoning_content"), "plan")
+        reply = rewrite_choice_delta({"content": "The `<think>` tags stay."}, filt)
+        self.assertEqual(reply.get("content"), "The `<think>` tags stay.")
+        self.assertFalse(reply.get("reasoning_content"))
+
+    def test_mixed_delta_feeds_native_before_content(self):
+        out = rewrite_choice_delta(
+            {"reasoning_content": "plan", "content": "<think>nope</think>hello"},
+            HarmonyFilter(),
+        )
+        self.assertEqual(out.get("reasoning_content"), "plan")
+        self.assertEqual(out.get("content"), "<think>nope</think>hello")
 

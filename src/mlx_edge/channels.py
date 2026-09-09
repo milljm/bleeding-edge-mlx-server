@@ -233,6 +233,10 @@ class HarmonyFilter:
         self._fence = False
         self._inline_run = 0
         self._bol = True
+        # Set once the engine streams on delta.reasoning / reasoning_content.
+        # After that, content is the user-visible reply — do not mine it for
+        # think/Harmony tags (models talk about ``<think>`` in prose).
+        self.seen_native_reason = False
 
     def _rewrite_channels(self, content: str, reasoning: str, flush: bool = False) -> tuple[str, str]:
         content = self._content_rep.push(content or "")
@@ -291,6 +295,8 @@ class HarmonyFilter:
     def push(self, text: str) -> tuple[str, str]:
         if not text:
             return "", ""
+        if self.seen_native_reason:
+            return self._push_user_content(text)
         self.buf += text
         self.buf = normalize_minimax_text(self.buf)
         content: list[str] = []
@@ -366,7 +372,28 @@ class HarmonyFilter:
         return self._rewrite_channels(content_s, reasoning_s, flush=True)
 
     def feed_reasoning(self, text: str) -> str:
+        if text:
+            self.seen_native_reason = True
         return self._reason_rep.push(text or "")
+
+    def _push_user_content(self, text: str) -> tuple[str, str]:
+        """Content after a native reasoning stream is the reply — no think split."""
+        self.mode = "content"
+        self.buf += text
+        chunk = self.buf
+        hold = self._tool_hold_index() if self.parse_tools else None
+        if hold is not None:
+            if hold > 0:
+                visible, extra = extract_tool_markup(chunk[:hold]) if self.parse_tools else (chunk[:hold], [])
+                self._add_tools(extra)
+                self.buf = chunk[hold:]
+                return self._rewrite_channels(visible, "")
+            return "", ""
+        self.buf = ""
+        if self.parse_tools:
+            chunk, extra = extract_tool_markup(chunk)
+            self._add_tools(extra)
+        return self._rewrite_channels(chunk, "")
 
     def _tool_hold_index(self) -> int | None:
         """Hold an unclosed tool block only in the *answer*, never while thinking.
@@ -526,10 +553,11 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
     """Rewrite an OpenAI delta in-place. Returns the delta, or None to drop the event."""
     raw = delta.get("content")
     native_in = native_reasoning(delta)
+    native_out = filt.feed_reasoning(native_in) if native_in else ""
     if isinstance(raw, str):
         content, reasoning = filt.push(raw)
-        if native_in and not reasoning:
-            reasoning = filt.feed_reasoning(native_in)
+        if native_out:
+            reasoning = native_out + (reasoning or "")
         out: dict[str, Any] = {k: v for k, v in delta.items() if k != "content"}
         strip_reasoning_fields(out)
         if reasoning:
@@ -541,15 +569,14 @@ def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str
     else:
         out = dict(delta)
         if native_in:
-            rewritten = filt.feed_reasoning(native_in)
             for key in REASON_KEYS:
                 if key in out:
-                    if rewritten:
-                        out[key] = rewritten
+                    if native_out:
+                        out[key] = native_out
                     else:
                         out.pop(key, None)
-            if rewritten and "reasoning_content" not in out:
-                out["reasoning_content"] = rewritten
+            if native_out and "reasoning_content" not in out:
+                out["reasoning_content"] = native_out
     if filt.fold_reasoning:
         folded_c = out.get("content") if isinstance(out.get("content"), str) else ""
         folded_r = native_reasoning(out)
