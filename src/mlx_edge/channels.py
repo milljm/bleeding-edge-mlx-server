@@ -102,23 +102,99 @@ def strip_reasoning_fields(obj: dict[str, Any]) -> None:
         obj.pop(key, None)
 
 
-def _next_tag(buf: str) -> tuple[int, int, str, str] | None:
-    hits: list[tuple[int, int, str, str]] = []
-    for rx, kind in ((TOKEN, "harmony"), (THINK_OPEN, "think_open"), (THINK_CLOSE, "think_close")):
-        match = rx.search(buf)
-        if match:
-            hits.append((match.start(), match.end(), kind, match.group(0)))
-    if not hits:
-        return None
-    hits.sort(key=lambda row: row[0])
-    return hits[0]
+def _advance_code(
+    text: str, fence: bool = False, inline_run: int = 0, bol: bool = True
+) -> tuple[bool, int, bool]:
+    i = 0
+    n = len(text)
+    while i < n:
+        if fence:
+            if text.startswith("```", i):
+                fence = False
+                i += 3
+                bol = False
+                continue
+            bol = text[i] == "\n"
+            i += 1
+            continue
+        if inline_run:
+            if text[i] == "`":
+                j = i
+                while j < n and text[j] == "`":
+                    j += 1
+                if j - i == inline_run:
+                    inline_run = 0
+                    i = j
+                    bol = False
+                    continue
+                i = j
+                bol = False
+                continue
+            bol = text[i] == "\n"
+            i += 1
+            continue
+        if text[i] == "`":
+            j = i
+            while j < n and text[j] == "`":
+                j += 1
+            run = j - i
+            at_line = bol if i == 0 else text[i - 1] == "\n"
+            if run >= 3 and at_line:
+                fence = True
+                i = j
+                bol = False
+                continue
+            inline_run = run
+            i = j
+            bol = False
+            continue
+        bol = text[i] == "\n"
+        i += 1
+    return fence, inline_run, bol
 
 
-def _incomplete_start(buf: str) -> int | None:
+def _in_markdown_code(
+    buf: str, at: int, fence: bool = False, inline_run: int = 0, bol: bool = True
+) -> bool:
+    """True if index ``at`` sits inside a fenced block or inline code span.
+
+    Models often *talk about* ``<think>`` / Harmony tokens inside backticks.
+    Those must stay in the reply, not switch channels.
+    """
+    fence, inline_run, _ = _advance_code(buf[: max(at, 0)], fence, inline_run, bol)
+    return fence or bool(inline_run)
+
+
+def _next_tag(
+    buf: str, fence: bool = False, inline_run: int = 0, bol: bool = True
+) -> tuple[int, int, str, str] | None:
+    pos = 0
+    while pos < len(buf):
+        hits: list[tuple[int, int, str, str]] = []
+        for rx, kind in ((TOKEN, "harmony"), (THINK_OPEN, "think_open"), (THINK_CLOSE, "think_close")):
+            match = rx.search(buf, pos)
+            if match:
+                hits.append((match.start(), match.end(), kind, match.group(0)))
+        if not hits:
+            return None
+        hits.sort(key=lambda row: row[0])
+        start, end, kind, raw = hits[0]
+        if _in_markdown_code(buf, start, fence, inline_run, bol):
+            pos = end
+            continue
+        return start, end, kind, raw
+    return None
+
+
+def _incomplete_start(
+    buf: str, fence: bool = False, inline_run: int = 0, bol: bool = True
+) -> int | None:
     match = INCOMPLETE.search(buf)
     special = incomplete_special_start(buf)
     starts = []
-    if match and match.end() == len(buf):
+    if match and match.end() == len(buf) and not _in_markdown_code(
+        buf, match.start(), fence, inline_run, bol
+    ):
         starts.append(match.start())
     if special is not None:
         starts.append(special)
@@ -154,6 +230,9 @@ class HarmonyFilter:
         self.saw_tools = False
         self._content_rep = LiteralReplacer(replace_content)
         self._reason_rep = LiteralReplacer(replace_reasoning)
+        self._fence = False
+        self._inline_run = 0
+        self._bol = True
 
     def _rewrite_channels(self, content: str, reasoning: str, flush: bool = False) -> tuple[str, str]:
         content = self._content_rep.push(content or "")
@@ -217,7 +296,7 @@ class HarmonyFilter:
         content: list[str] = []
         reasoning: list[str] = []
         while self.buf:
-            tag = _next_tag(self.buf)
+            tag = _next_tag(self.buf, self._fence, self._inline_run, self._bol)
             if tag:
                 start, end, kind, raw = tag
                 self._emit(self.buf[:start], content, reasoning)
@@ -231,7 +310,7 @@ class HarmonyFilter:
                     self.mode = "content"
                 self.buf = self.buf[end:]
                 continue
-            hold = _incomplete_start(self.buf)
+            hold = _incomplete_start(self.buf, self._fence, self._inline_run, self._bol)
             tool_hold = self._tool_hold_index()
             cuts = [i for i in (hold, tool_hold) if i is not None]
             if cuts:
@@ -362,6 +441,10 @@ class HarmonyFilter:
     def _emit(self, text: str, content: list[str], reasoning: list[str]) -> None:
         if not text:
             return
+        if self.mode not in {"skip_channel", "skip_constrain", "skip_role"}:
+            self._fence, self._inline_run, self._bol = _advance_code(
+                text, self._fence, self._inline_run, self._bol
+            )
         if self.mode == "skip_channel":
             self._channel_header += text
             return

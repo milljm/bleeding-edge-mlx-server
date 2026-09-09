@@ -288,3 +288,37 @@ class ChannelTests(unittest.TestCase):
         )
         self.assertEqual(msg["content"], "hello there")
 
+    def test_backtick_think_tags_stay_in_content(self):
+        raw = (
+            "emerged because those behaviors correlated with higher reward. "
+            "The `<think>` tags were used in training so the model always had a designated scratch space.\n\n"
+            "## Practical mechanics\n\n"
+            "- **Chat templates** typically force `<think>` open at the start of the assistant turn, "
+            "so the model always begins in thinking mode and must eventually emit `</think>`.\n"
+            "- **Serving stacks** (vLLM, llama.cpp, etc.) use \"reasoning parsers\""
+        )
+        content, reasoning = filter_text(raw)
+        self.assertIn("`<think>`", content)
+        self.assertIn("`</think>`", content)
+        self.assertIn("Chat templates", content)
+        self.assertIn("Serving stacks", content)
+        self.assertEqual(reasoning, "")
+
+    def test_streamed_backtick_think_is_literal(self):
+        filt = HarmonyFilter()
+        content = reasoning = ""
+        for piece in (" The ", "`", "<think", ">`", " tags"):
+            c, r = filt.push(piece)
+            content += c
+            reasoning += r
+        c, r = filt.flush()
+        self.assertEqual(content + c, " The `<think>` tags")
+        self.assertEqual(reasoning + r, "")
+
+    def test_real_think_block_still_splits(self):
+        content, reasoning = filter_text("<think>plan the answer</think>\nDone.")
+        self.assertEqual(reasoning.strip(), "plan the answer")
+        self.assertIn("Done.", content)
+        self.assertNotIn("<think>", content)
+        self.assertNotIn("</think>", content)
+
