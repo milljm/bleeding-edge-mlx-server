@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from mlx_edge.replace import LiteralReplacer
 from mlx_edge.tools import (
     extract_tool_markup,
     incomplete_special_start,
@@ -125,7 +126,14 @@ def _incomplete_start(buf: str) -> int | None:
 
 
 class HarmonyFilter:
-    def __init__(self, assume_analysis: bool = False, parse_tools: bool = True, fold_reasoning: bool = False) -> None:
+    def __init__(
+        self,
+        assume_analysis: bool = False,
+        parse_tools: bool = True,
+        fold_reasoning: bool = False,
+        replace_content: list[tuple[str, str]] | None = None,
+        replace_reasoning: list[tuple[str, str]] | None = None,
+    ) -> None:
         self.buf = ""
         # MiniMax-M2.7's HF template already wrote `<think>\n` in the prompt,
         # so generation starts *inside* a think block. Qwen/Llama stay in
@@ -144,6 +152,16 @@ class HarmonyFilter:
         self._tool_buf = ""
         self._channel_header = ""
         self.saw_tools = False
+        self._content_rep = LiteralReplacer(replace_content)
+        self._reason_rep = LiteralReplacer(replace_reasoning)
+
+    def _rewrite_channels(self, content: str, reasoning: str, flush: bool = False) -> tuple[str, str]:
+        content = self._content_rep.push(content or "")
+        reasoning = self._reason_rep.push(reasoning or "")
+        if flush:
+            content += self._content_rep.flush()
+            reasoning += self._reason_rep.flush()
+        return content, reasoning
 
     def take_tool_calls(self) -> list[dict[str, Any]]:
         out = self._pending_tools
@@ -238,11 +256,11 @@ class HarmonyFilter:
             # promote to content if MiniMax never emits a closer.
             blob = content_s + reasoning_s
             self.held += blob
-            return "", blob
+            return self._rewrite_channels("", blob)
         if self.held:
             # Already streamed as reasoning — do not re-emit on the switch.
             self.held = ""
-        return content_s, reasoning_s
+        return self._rewrite_channels(content_s, reasoning_s)
 
     def flush(self) -> tuple[str, str]:
         content: list[str] = []
@@ -265,8 +283,11 @@ class HarmonyFilter:
             if self.parse_tools:
                 leftover, more = extract_tool_markup(blob)
                 self._add_tools(more)
-            return leftover, ""
-        return content_s, reasoning_s
+            return self._rewrite_channels(leftover, "", flush=True)
+        return self._rewrite_channels(content_s, reasoning_s, flush=True)
+
+    def feed_reasoning(self, text: str) -> str:
+        return self._reason_rep.push(text or "")
 
     def _tool_hold_index(self) -> int | None:
         """Hold an unclosed tool block only in the *answer*, never while thinking.
@@ -421,18 +442,31 @@ def assume_think_start(*names: str) -> bool:
 def rewrite_choice_delta(delta: dict[str, Any], filt: HarmonyFilter) -> dict[str, Any] | None:
     """Rewrite an OpenAI delta in-place. Returns the delta, or None to drop the event."""
     raw = delta.get("content")
+    native_in = native_reasoning(delta)
     if isinstance(raw, str):
         content, reasoning = filt.push(raw)
+        if native_in and not reasoning:
+            reasoning = filt.feed_reasoning(native_in)
         out: dict[str, Any] = {k: v for k, v in delta.items() if k != "content"}
+        strip_reasoning_fields(out)
         if reasoning:
-            prev = native_reasoning(out)
-            out["reasoning_content"] = _one_copy(prev, reasoning) if prev else reasoning
+            out["reasoning_content"] = reasoning
         if content:
             out["content"] = content
         elif "content" in delta and not reasoning and delta.get("finish_reason"):
             out["content"] = ""
     else:
         out = dict(delta)
+        if native_in:
+            rewritten = filt.feed_reasoning(native_in)
+            for key in REASON_KEYS:
+                if key in out:
+                    if rewritten:
+                        out[key] = rewritten
+                    else:
+                        out.pop(key, None)
+            if rewritten and "reasoning_content" not in out:
+                out["reasoning_content"] = rewritten
     if filt.fold_reasoning:
         folded_c = out.get("content") if isinstance(out.get("content"), str) else ""
         folded_r = native_reasoning(out)
@@ -477,33 +511,60 @@ def rewrite_message(
     assume_analysis: bool = False,
     parse_tools: bool = True,
     fold_reasoning: bool = False,
+    replace_content: list[tuple[str, str]] | None = None,
+    replace_reasoning: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     raw = message.get("content")
     native_reason = native_reasoning(message)
     needs_filter = isinstance(raw, str) and (
         looks_like_harmony(raw) or looks_like_think(raw) or looks_like_tools(raw) or assume_analysis
     )
+    has_replace = bool(replace_content or replace_reasoning)
     if not needs_filter:
-        if fold_reasoning and native_reason:
-            out = dict(message)
-            content = raw if isinstance(raw, str) else ""
-            folded, _ = HarmonyFilter(fold_reasoning=True).fold_out(content, native_reason)
-            out["content"] = folded
-            strip_reasoning_fields(out)
-            return out
-        if native_reason and "reasoning_content" not in message:
-            out = dict(message)
-            out["reasoning_content"] = native_reason
-            return out
-        return message
+        if not has_replace:
+            if fold_reasoning and native_reason:
+                out = dict(message)
+                content = raw if isinstance(raw, str) else ""
+                folded, _ = HarmonyFilter(fold_reasoning=True).fold_out(content, native_reason)
+                out["content"] = folded
+                strip_reasoning_fields(out)
+                return out
+            if native_reason and "reasoning_content" not in message:
+                out = dict(message)
+                out["reasoning_content"] = native_reason
+                return out
+            return message
+        filt = HarmonyFilter(
+            fold_reasoning=fold_reasoning,
+            replace_content=replace_content,
+            replace_reasoning=replace_reasoning,
+        )
+        content, reasoning = filt.push(raw if isinstance(raw, str) else "")
+        if native_reason:
+            reasoning = (reasoning or "") + filt.feed_reasoning(native_reason)
+        more_c, more_r = filt.flush()
+        content, reasoning = content + more_c, reasoning + more_r
+        if fold_reasoning:
+            content, reasoning = filt.fold_out(content, reasoning)
+        out = dict(message)
+        if isinstance(raw, str) or content:
+            out["content"] = content
+        strip_reasoning_fields(out)
+        if reasoning:
+            out["reasoning_content"] = reasoning
+        return out
     filt = HarmonyFilter(
-        assume_analysis=assume_analysis, parse_tools=parse_tools, fold_reasoning=fold_reasoning
+        assume_analysis=assume_analysis,
+        parse_tools=parse_tools,
+        fold_reasoning=fold_reasoning,
+        replace_content=replace_content,
+        replace_reasoning=replace_reasoning,
     )
     content, reasoning = filt.push(raw if isinstance(raw, str) else "")
+    if native_reason:
+        reasoning = (reasoning or "") + filt.feed_reasoning(native_reason)
     more_c, more_r = filt.flush()
     content, reasoning = content + more_c, reasoning + more_r
-    if native_reason:
-        reasoning = _one_copy(reasoning, native_reason)
     if fold_reasoning:
         content, reasoning = filt.fold_out(content, reasoning)
     out = dict(message)
@@ -528,12 +589,18 @@ def rewrite_completion_payload(
     assume_analysis: bool = False,
     parse_tools: bool = True,
     fold_reasoning: bool = False,
+    replace_content: list[tuple[str, str]] | None = None,
+    replace_reasoning: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     choices = payload.get("choices")
     if not isinstance(choices, list):
         return payload
     filt = filt or HarmonyFilter(
-        assume_analysis=assume_analysis, parse_tools=parse_tools, fold_reasoning=fold_reasoning
+        assume_analysis=assume_analysis,
+        parse_tools=parse_tools,
+        fold_reasoning=fold_reasoning,
+        replace_content=replace_content,
+        replace_reasoning=replace_reasoning,
     )
     out_choices = []
     for choice in choices:

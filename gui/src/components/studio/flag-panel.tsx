@@ -29,6 +29,7 @@ const GROUP_LABEL: Record<FlagGroup, string> = {
   sampling: "Sampling",
   thinking: "Thinking",
   template: "Chat template",
+  replace: "Token replace",
 };
 
 export function FlagPanel() {
@@ -132,6 +133,7 @@ export function FlagPanel() {
       ) : null}
       <EngineCard />
       {model.engine === "lm" ? <TemplateCard /> : null}
+      {model.engine === "lm" || model.engine === "vlm" ? <TokenReplaceCard /> : null}
       <DeleteModelCard />
       {groups.map((group) => {
         const defs = visible.filter((d) => (d.group ?? "server") === group);
@@ -337,6 +339,42 @@ function TemplateCard() {
       {override ? (
         <p className="text-xs text-muted-foreground">{override.length.toLocaleString("en-US")} characters · Reload to apply</p>
       ) : null}
+    </section>
+  );
+}
+
+function TokenReplaceCard() {
+  const flags = useStudio((s) => s.flags);
+  const setFlag = useStudio((s) => s.setFlag);
+  return (
+    <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
+      <div>
+        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Token replace</h3>
+        <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+          Exact <span className="font-mono text-foreground">{"{target : replace}"}</span> pairs, one per line. Applied as
+          tokens stream. Next request — no Reload.
+        </p>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="replaceReasoning">Reasoning</Label>
+        <Textarea
+          id="replaceReasoning"
+          value={String(flags.replaceReasoning || "")}
+          onChange={(e) => setFlag("replaceReasoning", e.target.value)}
+          placeholder={"{old : new}"}
+          className="min-h-20 font-mono text-xs"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="replaceResponse">Response</Label>
+        <Textarea
+          id="replaceResponse"
+          value={String(flags.replaceResponse || "")}
+          onChange={(e) => setFlag("replaceResponse", e.target.value)}
+          placeholder={"{old : new}"}
+          className="min-h-20 font-mono text-xs"
+        />
+      </div>
     </section>
   );
 }

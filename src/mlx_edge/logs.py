@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 import time
@@ -33,6 +34,8 @@ _RE_GUI_POLL = re.compile(r"\bGET /v1/(?:progress|logs|host)(?:/|\?|\s)", re.I)
 
 
 def classify(text: str) -> str:
+    if text.startswith("DEBUG tok"):
+        return "debug"
     if LEVEL_ERROR.search(text):
         return "error"
     if LEVEL_WARN.search(text):
@@ -71,8 +74,70 @@ def is_noise(text: str) -> bool:
     return False
 
 
+def token_debug_lines(frame: str) -> list[str]:
+    """One log line per raw channel field in an engine SSE frame or JSON body."""
+    out: list[str] = []
+    payloads: list[str] = []
+    text = frame.strip()
+    if not text:
+        return out
+    if text.startswith("{") or text.startswith("["):
+        payloads.append(text)
+    else:
+        for line in text.splitlines():
+            if line.startswith("data:"):
+                piece = line[5:].strip()
+                if piece and piece != "[DONE]":
+                    payloads.append(piece)
+    for payload in payloads:
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            out.append(f"DEBUG tok raw={payload!r}")
+            continue
+        if not isinstance(data, dict):
+            continue
+        choices = data.get("choices")
+        if not isinstance(choices, list):
+            continue
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            blob = choice.get("delta")
+            if not isinstance(blob, dict):
+                blob = choice.get("message")
+            if not isinstance(blob, dict):
+                blob = {}
+            content = blob.get("content")
+            if isinstance(content, str) and content:
+                out.append(f"DEBUG tok content={content!r}")
+            r0 = blob.get("reasoning_content") if isinstance(blob.get("reasoning_content"), str) else ""
+            r1 = blob.get("reasoning") if isinstance(blob.get("reasoning"), str) else ""
+            if r0 and r1 and r0 == r1:
+                out.append(f"DEBUG tok reasoning_content|reasoning={r0!r}")
+            else:
+                if r0:
+                    out.append(f"DEBUG tok reasoning_content={r0!r}")
+                if r1:
+                    out.append(f"DEBUG tok reasoning={r1!r}")
+            tools = blob.get("tool_calls")
+            if tools:
+                out.append(f"DEBUG tok tool_calls={tools!r}")
+            finish = choice.get("finish_reason") or blob.get("finish_reason")
+            if finish:
+                out.append(f"DEBUG tok finish_reason={finish!r}")
+    return out
+
+
+def emit_token_debug(logs: Any, model: str, engine: str, frame: str) -> None:
+    if logs is None:
+        return
+    for line in token_debug_lines(frame):
+        logs.append(model, engine, line)
+
+
 class LogBuffer:
-    def __init__(self, maxlen: int = 3000) -> None:
+    def __init__(self, maxlen: int = 12000) -> None:
         self._lock = threading.RLock()
         self._cv = threading.Condition(self._lock)
         self._lines: deque[dict[str, Any]] = deque(maxlen=maxlen)

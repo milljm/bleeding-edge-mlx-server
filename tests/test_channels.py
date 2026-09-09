@@ -6,6 +6,7 @@ from mlx_edge.channels import (
     assume_think_start,
     filter_text,
     rewrite_completion_payload,
+    rewrite_message,
 )
 from mlx_edge.gateway import _rewrite_sse_frame
 
@@ -267,4 +268,23 @@ class ChannelTests(unittest.TestCase):
         self.assertIn("Done.", content)
         self.assertNotIn("</think>", content)
         self.assertEqual(reasoning, "")
+
+    def test_literal_replace_on_content_and_reasoning(self):
+        filt = HarmonyFilter(
+            assume_analysis=True,
+            replace_content=[("world", "there")],
+            replace_reasoning=[("plan", "PLAN")],
+        )
+        _, reasoning = filt.push("plan")
+        self.assertEqual(reasoning, "PLAN")
+        content, _ = filt.push("</think>hello world")
+        more_c, _ = filt.flush()
+        self.assertIn("hello there", content + more_c)
+
+    def test_rewrite_message_replace_without_harmony(self):
+        msg = rewrite_message(
+            {"role": "assistant", "content": "hello world"},
+            replace_content=[("world", "there")],
+        )
+        self.assertEqual(msg["content"], "hello there")
 

@@ -95,3 +95,48 @@ def fold_reason_enabled(names: list[str], prefs: dict[str, Any] | None = None) -
         if any(names_match(str(key), n) for n in needles):
             return _truthy(values.get("streamReasonToResponse"))
     return False
+
+
+def token_replace_rules(
+    names: list[str], prefs: dict[str, Any] | None = None
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Per-model `{target : replace}` lists: (response, reasoning)."""
+    from mlx_edge.replace import parse_replace_rules
+
+    data = prefs if prefs is not None else load_prefs()
+    flags = data.get("flagsByModel") or {}
+    if not isinstance(flags, dict):
+        return [], []
+    needles = [n for n in names if n]
+    if not needles:
+        return [], []
+    from mlx_edge.pool import names_match
+
+    for key, values in flags.items():
+        if not isinstance(values, dict):
+            continue
+        if any(names_match(str(key), n) for n in needles):
+            return (
+                parse_replace_rules(values.get("replaceResponse")),
+                parse_replace_rules(values.get("replaceReasoning")),
+            )
+    return [], []
+
+
+def debug_tokens_enabled(names: list[str], prefs: dict[str, Any] | None = None) -> bool:
+    """Settings → Log level DEBUG: dump every generated token into Logging."""
+    data = prefs if prefs is not None else load_prefs()
+    flags = data.get("flagsByModel") or {}
+    if not isinstance(flags, dict):
+        return False
+    needles = [n for n in names if n]
+    if not needles:
+        return False
+    from mlx_edge.pool import names_match
+
+    for key, values in flags.items():
+        if not isinstance(values, dict):
+            continue
+        if any(names_match(str(key), n) for n in needles):
+            return str(values.get("logLevel") or "").strip().upper() == "DEBUG"
+    return False

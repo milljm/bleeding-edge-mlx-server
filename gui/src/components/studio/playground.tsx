@@ -608,9 +608,12 @@ const TurnCard = memo(function TurnCard({
       ) : (
         <>
           {turn.thinking ? (
-            <p className="mb-2 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground italic">
-              {turn.thinking}
-            </p>
+            <details className="mb-2 rounded-lg bg-secondary/50 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+              <summary className="cursor-pointer select-none font-medium tracking-wide text-muted-foreground uppercase">
+                reasoning
+              </summary>
+              <p className="mt-2 whitespace-pre-wrap italic">{turn.thinking}</p>
+            </details>
           ) : null}
           {turn.text ? (
             <div className="leading-relaxed">
