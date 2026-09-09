@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from mlx_edge.channels import HarmonyFilter, assume_think_start, rewrite_completion_payload
 from mlx_edge.playground import PlaygroundStore
 from mlx_edge.pool import Inflight, LoadedModel, ModelPool, names_for
-from mlx_edge.prefs import fold_reason_enabled
+from mlx_edge.prefs import fold_reason_enabled, token_replace_rules
 from mlx_edge.progress import ProgressTracker
 
 CORS = {
@@ -801,6 +801,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             body = prepare_chat_body(body, item)
             stream = wants_stream(body)
             fold_reasoning = fold_reason_enabled(names_for(item))
+            replace_content, replace_reasoning = token_replace_rules(names_for(item))
             pool.progress.begin(item.public_id, item.engine, stream=stream)
             job = pool.track_request(item.public_id)
             try:
@@ -814,6 +815,8 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     assume_analysis=assume_think_start(item.model, item.public_id),
                     parse_tools=request_has_tools(body),
                     fold_reasoning=fold_reasoning,
+                    replace_content=replace_content,
+                    replace_reasoning=replace_reasoning,
                     job=job,
                     logs=pool.logs,
                 )
@@ -1042,6 +1045,8 @@ def _proxy_to(
     assume_analysis: bool = False,
     parse_tools: bool = False,
     fold_reasoning: bool = False,
+    replace_content: list[tuple[str, str]] | None = None,
+    replace_reasoning: list[tuple[str, str]] | None = None,
     job: Inflight | None = None,
     logs: Any = None,
 ) -> None:
@@ -1117,6 +1122,8 @@ def _proxy_to(
                 assume_analysis=assume_analysis,
                 parse_tools=parse_tools,
                 fold_reasoning=fold_reasoning,
+                replace_content=replace_content,
+                replace_reasoning=replace_reasoning,
                 job=job,
                 logs=logs,
                 engine=item.engine,
@@ -1143,6 +1150,8 @@ def _proxy_to(
                         assume_analysis=assume_analysis,
                         parse_tools=parse_tools,
                         fold_reasoning=fold_reasoning,
+                        replace_content=replace_content,
+                        replace_reasoning=replace_reasoning,
                     )
                 ).encode("utf-8")
         handler.send_response(resp.status)
@@ -1244,6 +1253,8 @@ def _pipe_sse(
     assume_analysis: bool = False,
     parse_tools: bool = False,
     fold_reasoning: bool = False,
+    replace_content: list[tuple[str, str]] | None = None,
+    replace_reasoning: list[tuple[str, str]] | None = None,
     job: Inflight | None = None,
     logs: Any = None,
     engine: str = "lm",
@@ -1255,7 +1266,11 @@ def _pipe_sse(
     pending_done: str | None = None
     filt = (
         HarmonyFilter(
-            assume_analysis=assume_analysis, parse_tools=parse_tools, fold_reasoning=fold_reasoning
+            assume_analysis=assume_analysis,
+            parse_tools=parse_tools,
+            fold_reasoning=fold_reasoning,
+            replace_content=replace_content,
+            replace_reasoning=replace_reasoning,
         )
         if strip_channels
         else None

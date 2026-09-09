@@ -1,6 +1,6 @@
 export type EngineKind = "lm" | "vlm" | "embed" | "tts" | "stt" | "rerank" | "image";
 export type FlagType = "number" | "text" | "bool" | "select";
-export type FlagGroup = "server" | "sampling" | "thinking" | "template";
+export type FlagGroup = "server" | "sampling" | "thinking" | "template" | "replace";
 
 export type FlagDef = {
   key: string;
@@ -117,6 +117,28 @@ export const FLAG_DEFS: FlagDef[] = [
     group: "thinking",
     edge: true,
     default: false,
+  },
+  {
+    key: "replaceReasoning",
+    flag: "--replace-reasoning",
+    label: "Reasoning replace",
+    help: "Exact `{target : replace}` pairs on the reasoning stream.",
+    type: "text",
+    engines: ["lm", "vlm"],
+    group: "replace",
+    edge: true,
+    default: "",
+  },
+  {
+    key: "replaceResponse",
+    flag: "--replace-response",
+    label: "Response replace",
+    help: "Exact `{target : replace}` pairs on the reply stream.",
+    type: "text",
+    engines: ["lm", "vlm"],
+    group: "replace",
+    edge: true,
+    default: "",
   },
   {
     key: "adapterPath",

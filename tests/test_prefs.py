@@ -69,6 +69,22 @@ class PrefsTests(unittest.TestCase):
         self.assertFalse(fold_reason_enabled(["Qwen3-8B-4bit"], prefs))
         self.assertFalse(fold_reason_enabled(["Weird-Reason-MLX"], {"flagsByModel": {}}))
 
+    def test_token_replace_rules_match_basename(self):
+        from mlx_edge.prefs import token_replace_rules
+
+        prefs = {
+            "flagsByModel": {
+                "GLM-5.3-Flash-MLX-6bit": {
+                    "replaceResponse": "{foo : bar}",
+                    "replaceReasoning": "{think : }",
+                }
+            }
+        }
+        content, reason = token_replace_rules(["GLM-5.3-Flash-MLX-6bit"], prefs)
+        self.assertEqual(content, [("foo", "bar")])
+        self.assertEqual(reason, [("think", "")])
+        self.assertEqual(token_replace_rules(["other"], prefs), ([], []))
+
 
 if __name__ == "__main__":
     unittest.main()
