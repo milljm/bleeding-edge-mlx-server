@@ -14,6 +14,7 @@ const LEVEL_CLASS: Record<LogLevel, string> = {
   progress: "text-ok",
   http: "text-foreground",
   info: "text-muted-foreground",
+  debug: "text-foreground",
 };
 
 export function LogPanel() {

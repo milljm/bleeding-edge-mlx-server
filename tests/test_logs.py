@@ -1,6 +1,6 @@
 import unittest
 
-from mlx_edge.logs import LogBuffer, classify, is_noise
+from mlx_edge.logs import LogBuffer, classify, is_noise, token_debug_lines
 
 
 class LogTests(unittest.TestCase):
@@ -10,6 +10,7 @@ class LogTests(unittest.TestCase):
         self.assertEqual(classify("WARNING kv cache"), "warn")
         self.assertEqual(classify('127.0.0.1 - "POST /v1/chat/completions HTTP/1.1" 200'), "http")
         self.assertEqual(classify("hello"), "info")
+        self.assertEqual(classify("DEBUG tok content='failed'"), "debug")
 
     def test_snapshot_filter_and_clear(self):
         buf = LogBuffer(maxlen=10)
@@ -71,6 +72,25 @@ class LogTests(unittest.TestCase):
         snap = buf.snapshot()
         self.assertEqual(len(snap["lines"]), 1)
         self.assertIn("1024/1620", snap["lines"][0]["text"])
+
+    def test_token_debug_lines_all_channels(self):
+        frame = (
+            'data: {"choices":[{"delta":{"content":"<|channel|>","reasoning_content":"plan"}}]}\n\n'
+            'data: {"choices":[{"delta":{"content":" hi"}}]}\n\n'
+            "data: [DONE]\n\n"
+        )
+        lines = token_debug_lines(frame)
+        self.assertEqual(
+            lines,
+            [
+                "DEBUG tok content='<|channel|>'",
+                "DEBUG tok reasoning_content='plan'",
+                "DEBUG tok content=' hi'",
+            ],
+        )
+        buf = LogBuffer()
+        buf.append("GLM", "vlm", lines[0])
+        self.assertEqual(buf.snapshot()["lines"][0]["level"], "debug")
 
 
 if __name__ == "__main__":

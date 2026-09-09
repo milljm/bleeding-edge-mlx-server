@@ -17,7 +17,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 from mlx_edge.channels import HarmonyFilter, assume_think_start, rewrite_completion_payload
 from mlx_edge.playground import PlaygroundStore
 from mlx_edge.pool import Inflight, LoadedModel, ModelPool, names_for
-from mlx_edge.prefs import fold_reason_enabled, token_replace_rules
+from mlx_edge.logs import emit_token_debug
+from mlx_edge.prefs import debug_tokens_enabled, fold_reason_enabled, token_replace_rules
 from mlx_edge.progress import ProgressTracker
 
 CORS = {
@@ -802,6 +803,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             stream = wants_stream(body)
             fold_reasoning = fold_reason_enabled(names_for(item))
             replace_content, replace_reasoning = token_replace_rules(names_for(item))
+            debug_tokens = debug_tokens_enabled(names_for(item))
             pool.progress.begin(item.public_id, item.engine, stream=stream)
             job = pool.track_request(item.public_id)
             try:
@@ -817,6 +819,7 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
                     fold_reasoning=fold_reasoning,
                     replace_content=replace_content,
                     replace_reasoning=replace_reasoning,
+                    debug_tokens=debug_tokens,
                     job=job,
                     logs=pool.logs,
                 )
@@ -1047,6 +1050,7 @@ def _proxy_to(
     fold_reasoning: bool = False,
     replace_content: list[tuple[str, str]] | None = None,
     replace_reasoning: list[tuple[str, str]] | None = None,
+    debug_tokens: bool = False,
     job: Inflight | None = None,
     logs: Any = None,
 ) -> None:
@@ -1124,6 +1128,7 @@ def _proxy_to(
                 fold_reasoning=fold_reasoning,
                 replace_content=replace_content,
                 replace_reasoning=replace_reasoning,
+                debug_tokens=debug_tokens,
                 job=job,
                 logs=logs,
                 engine=item.engine,
@@ -1144,6 +1149,8 @@ def _proxy_to(
             except json.JSONDecodeError:
                 data = None
             if isinstance(data, dict):
+                if debug_tokens:
+                    emit_token_debug(logs, model_id, item.engine, payload.decode("utf-8", "replace"))
                 payload = json.dumps(
                     rewrite_completion_payload(
                         data,
@@ -1255,6 +1262,7 @@ def _pipe_sse(
     fold_reasoning: bool = False,
     replace_content: list[tuple[str, str]] | None = None,
     replace_reasoning: list[tuple[str, str]] | None = None,
+    debug_tokens: bool = False,
     job: Inflight | None = None,
     logs: Any = None,
     engine: str = "lm",
@@ -1316,6 +1324,8 @@ def _pipe_sse(
             sse_buf = frames.pop() if frames else b""
             for raw in frames:
                 frame = raw.decode("utf-8", "replace")
+                if debug_tokens:
+                    emit_token_debug(logs, model_id, engine, frame)
                 if tracker:
                     leftover = tracker.ingest_sse(model_id, leftover + raw + b"\n\n")
                 rewritten = _rewrite_sse_frame(frame, filt)
@@ -1340,6 +1350,8 @@ def _pipe_sse(
             return
         if filt is not None and sse_buf.strip():
             frame = sse_buf.decode("utf-8", "replace")
+            if debug_tokens:
+                emit_token_debug(logs, model_id, engine, frame)
             rewritten = _rewrite_sse_frame(frame, filt)
             if rewritten:
                 if _is_done_frame(rewritten):

@@ -217,7 +217,7 @@ export const FLAG_DEFS: FlagDef[] = [
     key: "logLevel",
     flag: "--log-level",
     label: "Log level",
-    help: "Server logging verbosity.",
+    help: "Server logging verbosity. DEBUG also prints every generated token in Logging, raw, every channel.",
     type: "select",
     engines: ["lm", "vlm", "embed", "tts", "stt", "rerank", "image"],
     advanced: true,

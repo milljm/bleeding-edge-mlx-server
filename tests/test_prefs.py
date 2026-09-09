@@ -85,6 +85,15 @@ class PrefsTests(unittest.TestCase):
         self.assertEqual(reason, [("think", "")])
         self.assertEqual(token_replace_rules(["other"], prefs), ([], []))
 
+    def test_debug_tokens_enabled(self):
+        from mlx_edge.prefs import debug_tokens_enabled
+
+        prefs = {"flagsByModel": {"GLM-5.3-Flash-MLX-6bit": {"logLevel": "DEBUG"}}}
+        self.assertTrue(debug_tokens_enabled(["GLM-5.3-Flash-MLX-6bit"], prefs))
+        self.assertFalse(
+            debug_tokens_enabled(["GLM-5.3-Flash-MLX-6bit"], {"flagsByModel": {"GLM-5.3-Flash-MLX-6bit": {"logLevel": "INFO"}}})
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

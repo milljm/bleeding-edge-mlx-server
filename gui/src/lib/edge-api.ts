@@ -512,7 +512,7 @@ function clamp01(value: number) {
   return Math.min(1, Math.max(0, value));
 }
 
-export type LogLevel = "info" | "warn" | "error" | "http" | "progress";
+export type LogLevel = "info" | "warn" | "error" | "http" | "progress" | "debug";
 export type LogLine = {
   seq: number;
   ts: number;
