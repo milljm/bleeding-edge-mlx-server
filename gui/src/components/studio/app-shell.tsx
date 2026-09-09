@@ -238,16 +238,24 @@ export function AppShell() {
               </TabsList>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-              <TabsContent value="settings">
+              <TabsContent value="settings" forceMount className="data-[state=inactive]:hidden">
                 <FlagPanel />
               </TabsContent>
-              <TabsContent value="playground" className="flex h-full min-h-80 flex-col">
+              <TabsContent
+                value="playground"
+                forceMount
+                className="flex h-full min-h-80 flex-col data-[state=inactive]:hidden"
+              >
                 <Playground />
               </TabsContent>
-              <TabsContent value="endpoint">
+              <TabsContent value="endpoint" forceMount className="data-[state=inactive]:hidden">
                 <EndpointPanel />
               </TabsContent>
-              <TabsContent value="logging" className="flex h-full min-h-80 flex-col">
+              <TabsContent
+                value="logging"
+                forceMount
+                className="flex h-full min-h-80 flex-col data-[state=inactive]:hidden"
+              >
                 <LogPanel />
               </TabsContent>
             </div>

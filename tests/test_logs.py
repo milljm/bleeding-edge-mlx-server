@@ -88,6 +88,10 @@ class LogTests(unittest.TestCase):
                 "DEBUG tok content=' hi'",
             ],
         )
+        aliased = token_debug_lines(
+            'data: {"choices":[{"delta":{"reasoning_content":"Let","reasoning":"Let"}}]}'
+        )
+        self.assertEqual(aliased, ["DEBUG tok reasoning_content|reasoning='Let'"])
         buf = LogBuffer()
         buf.append("GLM", "vlm", lines[0])
         self.assertEqual(buf.snapshot()["lines"][0]["level"], "debug")

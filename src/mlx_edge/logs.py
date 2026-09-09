@@ -108,10 +108,18 @@ def token_debug_lines(frame: str) -> list[str]:
                 blob = choice.get("message")
             if not isinstance(blob, dict):
                 blob = {}
-            for key in ("content", "reasoning_content", "reasoning"):
-                val = blob.get(key)
-                if isinstance(val, str) and val:
-                    out.append(f"DEBUG tok {key}={val!r}")
+            content = blob.get("content")
+            if isinstance(content, str) and content:
+                out.append(f"DEBUG tok content={content!r}")
+            r0 = blob.get("reasoning_content") if isinstance(blob.get("reasoning_content"), str) else ""
+            r1 = blob.get("reasoning") if isinstance(blob.get("reasoning"), str) else ""
+            if r0 and r1 and r0 == r1:
+                out.append(f"DEBUG tok reasoning_content|reasoning={r0!r}")
+            else:
+                if r0:
+                    out.append(f"DEBUG tok reasoning_content={r0!r}")
+                if r1:
+                    out.append(f"DEBUG tok reasoning={r1!r}")
             tools = blob.get("tool_calls")
             if tools:
                 out.append(f"DEBUG tok tool_calls={tools!r}")
