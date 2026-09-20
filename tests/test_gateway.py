@@ -5,6 +5,7 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from unittest import mock
 
 from mlx_edge.gateway import _quiet_access, make_handler
 from mlx_edge.pool import ModelPool, free_port, strip_bind_args
@@ -91,6 +92,68 @@ class GatewayTests(unittest.TestCase):
 
         status, listed = self._json("GET", "/v1/models")
         self.assertEqual([row["id"] for row in listed["data"]], ["Qwen2.5-VL-7B-Instruct-4bit"])
+
+    def test_load_accepts_apc_env_for_vlm(self):
+        status, body = self._json(
+            "POST",
+            "/v1/load",
+            {
+                "engine": "vlm",
+                "model": "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+                "env": {"APC_ENABLED": True, "APC_NUM_BLOCKS": 4096},
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body.get("ok"))
+        item = self.pool.resolve("Qwen2.5-VL-7B-Instruct-4bit")
+        self.assertEqual(item.env, {"APC_ENABLED": "1", "APC_NUM_BLOCKS": "4096"})
+
+    def test_load_env_bool_false_is_explicit_zero(self):
+        status, _ = self._json(
+            "POST",
+            "/v1/load",
+            {"engine": "vlm", "model": "vision", "env": {"APC_ENABLED": False}},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.pool.resolve("vision").env, {"APC_ENABLED": "0"})
+
+    def test_load_rejects_unknown_env_key(self):
+        status, body = self._json(
+            "POST",
+            "/v1/load",
+            {"engine": "vlm", "model": "vision", "env": {"SOMETHING": "1"}},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("APC_ENABLED", (body.get("error") or {}).get("message", ""))
+
+    def test_load_rejects_env_for_lm(self):
+        status, body = self._json(
+            "POST",
+            "/v1/load",
+            {"engine": "lm", "model": "text", "env": {"APC_ENABLED": "1"}},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("vlm", (body.get("error") or {}).get("message", ""))
+
+    def test_load_rejects_bad_env_values(self):
+        status, body = self._json(
+            "POST",
+            "/v1/load",
+            {"engine": "vlm", "model": "vision", "env": {"APC_NUM_BLOCKS": -4}},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("positive integer", (body.get("error") or {}).get("message", ""))
+
+    def test_engine_features_endpoint(self):
+        features = lambda engine_id: frozenset({"apc"}) if engine_id == "vlm" else frozenset()  # noqa: E731
+        with mock.patch("mlx_edge.engines.engine_features", side_effect=features):
+            status, body = self._json("GET", "/v1/engine-features")
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get("object"), "edge.engine_features")
+        engines_map = body.get("engines") or {}
+        self.assertEqual(engines_map.get("vlm"), ["apc"])
+        self.assertEqual(engines_map.get("lm"), [])
+        self.assertIn("tts", engines_map)
 
     def test_health_lists_pool(self):
         self._json("POST", "/v1/load", {"engine": "lm", "model": "a"})

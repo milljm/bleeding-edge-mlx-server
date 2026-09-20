@@ -187,13 +187,27 @@ export async function putPrefs(prefs: StudioPrefs): Promise<StudioPrefs> {
   };
 }
 
-export async function postLoad(input: { engine: EngineKind; model: string; args?: string[] }) {
+export async function postLoad(input: { engine: EngineKind; model: string; args?: string[]; env?: Record<string, string> }) {
   const res = await fetch("/v1/load", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
   return parseJson(res);
+}
+
+export type EngineFeatures = Partial<Record<EngineKind, string[]>>;
+
+/** What the installed engines support (GET /v1/engine-features). A missing
+ * engine entry means unknown — the studio hides feature-gated switches. */
+export async function getEngineFeatures(): Promise<EngineFeatures> {
+  const res = await fetch("/v1/engine-features");
+  const body = (await parseJson(res)) as { engines?: Record<string, string[]> };
+  const engines: EngineFeatures = {};
+  for (const [engine, list] of Object.entries(body.engines ?? {})) {
+    if (Array.isArray(list)) engines[engine as EngineKind] = list.map(String);
+  }
+  return engines;
 }
 
 export async function postUnload(model: string) {

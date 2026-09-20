@@ -36,6 +36,49 @@ SPECIAL_KINDS = {
     "image": ("image generation", "POST /v1/images/generations"),
 }
 
+# Load-time environment Edge may inject into an engine child (the studio's
+# prompt-cache sliders ride this; see /v1/engine-features). Values are
+# validated by _load_env before they reach pool.load.
+LOAD_ENV_KEYS = {
+    "APC_ENABLED": "bool",
+    "APC_NUM_BLOCKS": "int",
+    "APC_BLOCK_SIZE": "int",
+}
+LOAD_ENV_ENGINES = {"vlm"}
+
+
+def _load_env(engine: str, raw: Any) -> tuple[dict[str, str], str | None]:
+    """Validate a /v1/load `env` payload into spawn-time strings.
+
+    Returns (env, None) on success, or ({}, message) when the payload is
+    malformed, uses an unknown key, or targets an unsupported engine.
+    """
+    if raw is None or raw == {}:
+        return {}, None
+    if not isinstance(raw, dict):
+        return {}, "env must be an object of scalar values"
+    if engine not in LOAD_ENV_ENGINES:
+        return {}, f"env is only supported for engine {sorted(LOAD_ENV_ENGINES)[0]!r} (got {engine!r})"
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        if key not in LOAD_ENV_KEYS:
+            allowed = ", ".join(sorted(LOAD_ENV_KEYS))
+            return {}, f"env key {key!r} not supported — allowed: {allowed}"
+        kind = LOAD_ENV_KEYS[key]
+        if kind == "bool":
+            out[key] = "1" if value in (True, "true", "True", 1, "1") else "0"
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            return {}, f"env {key!r} must be a positive integer"
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return {}, f"env {key!r} must be a positive integer"
+        if number <= 0:
+            return {}, f"env {key!r} must be a positive integer"
+        out[key] = str(number)
+    return out, None
+
 STATIC_TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -321,6 +364,9 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if path in {"/v1/host", "/edge/host"}:
                 self._host()
                 return
+            if path == "/v1/engine-features":
+                self._engine_features()
+                return
             if self._static(raw_path):
                 return
             self._json({"error": {"message": "Not found", "type": "invalid_request_error"}}, 404)
@@ -431,6 +477,15 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             from mlx_edge.hoststats import snapshot
 
             self._json(snapshot())
+
+        def _engine_features(self) -> None:
+            from mlx_edge.engines import engine_features
+
+            engines = {
+                engine_id: sorted(engine_features(engine_id))
+                for engine_id in ("lm", "vlm", "embed", "tts", "stt", "rerank", "image")
+            }
+            self._json({"object": "edge.engine_features", "engines": engines})
 
         def _hub_search(self) -> None:
             from mlx_edge.hub import TOKEN_HELP, search_quants, token_set
@@ -546,8 +601,12 @@ def make_handler(pool: ModelPool, static_dir: Path | str | None = None) -> type[
             if not isinstance(extra, list) or not all(isinstance(x, str) for x in extra):
                 self._json({"error": {"message": "args must be a list of strings", "type": "invalid_request_error"}}, 400)
                 return
+            spawn_env, err = _load_env(engine, body.get("env"))
+            if err is not None:
+                self._json({"error": {"message": err, "type": "invalid_request_error"}}, 400)
+                return
             try:
-                item = pool.load(engine, model, extra)
+                item = pool.load(engine, model, extra, env=spawn_env)
             except Exception as exc:  # noqa: BLE001 — surface engine spawn errors
                 from mlx_edge.pool import annotate_load_error
 

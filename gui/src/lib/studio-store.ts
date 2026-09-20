@@ -1,9 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { defaultFlags, flagArgs, flagsForModel, mergeFlags, type EngineKind, type FlagValues } from "./flags";
+import { defaultFlags, envArgs, flagArgs, flagsForModel, mergeFlags, type EngineKind, type FlagValues } from "./flags";
 import { applyEngineOverrides, flagKey, loadTarget, mergeCatalog, migrateWatchDirs, type ModelRec } from "./models";
 import {
   DEFAULT_GATEWAY,
+  getEngineFeatures,
   getHealth,
   getPrefs,
   listServed,
@@ -12,6 +13,7 @@ import {
   postScan,
   postUnload,
   putPrefs,
+  type EngineFeatures,
   type GatewayInfo,
   type ProgressSnapshot,
   type ScanError,
@@ -32,6 +34,7 @@ type StudioState = {
   lockedByModel: Record<string, boolean>;
   served: ServedRuntime[];
   gateway: GatewayInfo;
+  engineFeatures: EngineFeatures;
   tab: StudioTab;
   dirDraft: string;
   scanning: boolean;
@@ -63,6 +66,7 @@ type StudioState = {
   stopServe: (id?: string) => Promise<void>;
   reloadServe: () => Promise<void>;
   syncServed: () => Promise<void>;
+  syncEngineFeatures: () => Promise<void>;
   selected: () => ModelRec | undefined;
   isLoaded: (id?: string | null) => boolean;
   setProgress: (progress: ProgressSnapshot | null) => void;
@@ -127,6 +131,7 @@ export const useStudio = create<StudioState>()(
       lockedByModel: {},
       served: [],
       gateway: DEFAULT_GATEWAY,
+      engineFeatures: {},
       tab: "settings",
       dirDraft: "",
       scanning: false,
@@ -273,6 +278,7 @@ export const useStudio = create<StudioState>()(
             engine: model.engine,
             model: loadTarget(model),
             args: flagArgs(model.engine, flags, ["host", "port"]),
+            env: envArgs(model.engine, flags, get().engineFeatures[model.engine] ?? []),
           });
           const gateway = (await getHealth()).gateway;
           const listed = await listServed(gateway);
@@ -325,6 +331,13 @@ export const useStudio = create<StudioState>()(
           gateway,
           pinKeys: pinCatalogIds(get().models, listed, loadingIds),
         });
+      },
+      syncEngineFeatures: async () => {
+        try {
+          set({ engineFeatures: await getEngineFeatures() });
+        } catch {
+          /* preview without a gateway keeps feature-gated switches hidden */
+        }
       },
     }),
     {

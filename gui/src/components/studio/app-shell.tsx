@@ -360,6 +360,7 @@ function useSidebarLayout() {
 
 function useRehydrateStudio() {
   const syncServed = useStudio((s) => s.syncServed);
+  const syncEngineFeatures = useStudio((s) => s.syncEngineFeatures);
   const scanWatchDirs = useStudio((s) => s.scanWatchDirs);
   const applyPrefs = useStudio((s) => s.applyPrefs);
   const persistPrefs = useStudio((s) => s.persistPrefs);
@@ -384,6 +385,7 @@ function useRehydrateStudio() {
           /* empty or unreachable prefs are fine */
         }
         if (cancelled) return;
+        void syncEngineFeatures();
         try {
           await scanWatchDirs();
         } catch {
@@ -399,5 +401,5 @@ function useRehydrateStudio() {
     return () => {
       cancelled = true;
     };
-  }, [syncServed, scanWatchDirs, applyPrefs, persistPrefs, setHydrated]);
+  }, [syncServed, syncEngineFeatures, scanWatchDirs, applyPrefs, persistPrefs, setHydrated]);
 }
