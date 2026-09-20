@@ -174,6 +174,7 @@ class LoadedModel:
     started_at: float
     proc: subprocess.Popen[bytes] | None = None
     args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
     public_id: str = ""
     context: int | None = None
 
@@ -250,7 +251,7 @@ class LoadedModel:
         return row
 
 
-SpawnFn = Callable[[str, str, int, list[str]], subprocess.Popen[bytes] | None]
+SpawnFn = Callable[[str, str, int, list[str], dict[str, str] | None], subprocess.Popen[bytes] | None]
 
 # mlx-vlm.server waits this many seconds for the next token. Default 600, which
 # kills a long prefill before first token. 0 disables it (mlx-vlm treats ≤0 as
@@ -258,18 +259,26 @@ SpawnFn = Callable[[str, str, int, list[str]], subprocess.Popen[bytes] | None]
 VLM_QUEUE_TIMEOUT_ENV = "MLX_VLM_TOKEN_QUEUE_TIMEOUT"
 
 
-def child_env(engine_id: str) -> dict[str, str]:
+def child_env(engine_id: str, extra_env: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     env.setdefault("PYTHONIOENCODING", "utf-8")
     if engine_id in {"vlm", "embed", "tts", "stt", "rerank", "image"}:
         env.setdefault(VLM_QUEUE_TIMEOUT_ENV, "0")
+    if extra_env:
+        env.update({str(k): str(v) for k, v in extra_env.items()})
     return env
 
 
-def default_spawn(engine_id: str, model: str, port: int, extra: list[str]) -> subprocess.Popen[bytes]:
+def default_spawn(
+    engine_id: str,
+    model: str,
+    port: int,
+    extra: list[str],
+    env: dict[str, str] | None = None,
+) -> subprocess.Popen[bytes]:
     cmd = spawn_argv(engine_id, model, port, extra)
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env(engine_id))
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env(engine_id, env))
 
 
 def warmup_engine(item: LoadedModel, timeout: float = 120.0) -> None:
@@ -375,15 +384,22 @@ class ModelPool:
                 return item
         return None
 
-    def load(self, engine: str, model: str, extra: list[str] | None = None) -> LoadedModel:
+    def load(
+        self,
+        engine: str,
+        model: str,
+        extra: list[str] | None = None,
+        env: dict[str, str] | None = None,
+    ) -> LoadedModel:
         extra = list(extra or [])
+        spawn_env = {str(k): str(v) for k, v in (env or {}).items() if isinstance(v, (str, int, float, bool))}
         if engine == "lm":
             extra = template_for_spawn(model, extra)
         existing = self.resolve(model)
         if existing:
             self.unload(existing.id)
         port = free_port()
-        proc = self._spawn(engine, model, port, extra)
+        proc = self._spawn(engine, model, port, extra, spawn_env)
         public_id = unique_public_id(model, [m.public_id for m in self.list()])
         item = LoadedModel(
             id=public_id,
@@ -393,6 +409,7 @@ class ModelPool:
             started_at=time.time(),
             proc=proc,
             args=extra,
+            env=spawn_env,
             public_id=public_id,
         )
         self.progress.ensure(item.public_id, engine)

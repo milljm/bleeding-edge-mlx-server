@@ -11,6 +11,7 @@ from mlx_edge.pool import (
     annotate_load_error,
     basename_id,
     child_env,
+    default_spawn,
     names_match,
     server_argv,
     spawn_argv,
@@ -65,6 +66,38 @@ class PoolTests(unittest.TestCase):
         self.assertNotIn("MLX_VLM_TOKEN_QUEUE_TIMEOUT", lm)
         with mock.patch.dict("os.environ", {"MLX_VLM_TOKEN_QUEUE_TIMEOUT": "120"}):
             self.assertEqual(child_env("vlm")["MLX_VLM_TOKEN_QUEUE_TIMEOUT"], "120")
+
+    def test_child_env_merges_extra_env_over_defaults(self):
+        env = child_env("vlm", {"APC_ENABLED": "1"})
+        self.assertEqual(env["APC_ENABLED"], "1")
+        self.assertEqual(env["MLX_VLM_TOKEN_QUEUE_TIMEOUT"], "0")
+        # User-exported values still win when no explicit override is passed.
+        with mock.patch.dict("os.environ", {"APC_ENABLED": "0"}):
+            self.assertEqual(child_env("vlm")["APC_ENABLED"], "0")
+            self.assertEqual(child_env("vlm", {"APC_ENABLED": "1"})["APC_ENABLED"], "1")
+
+    def test_default_spawn_merges_env(self):
+        with mock.patch("mlx_edge.pool.subprocess.Popen") as popen:
+            popen.return_value = DummyProc()
+            default_spawn("vlm", "vision", 9, [], {"APC_ENABLED": "1"})
+        _, kwargs = popen.call_args
+        self.assertEqual(kwargs["env"]["APC_ENABLED"], "1")
+        self.assertEqual(kwargs["env"]["MLX_VLM_TOKEN_QUEUE_TIMEOUT"], "0")
+
+    def test_load_threads_env_into_spawn_and_records_it(self):
+        seen: list[dict[str, str] | None] = []
+        pool = ModelPool(
+            spawn=lambda _e, _m, _p, _a, env: (seen.append(env), DummyProc())[1],
+            wait=lambda *_a, **_k: None,
+        )
+        item = pool.load("vlm", "vision", ["--vision-cache-size", "8"], env={"APC_ENABLED": "1", "APC_NUM_BLOCKS": "4096"})
+        self.assertEqual(seen, [{"APC_ENABLED": "1", "APC_NUM_BLOCKS": "4096"}])
+        self.assertEqual(item.env, {"APC_ENABLED": "1", "APC_NUM_BLOCKS": "4096"})
+
+    def test_load_env_ignores_non_scalar_values(self):
+        pool = ModelPool(spawn=lambda *_a, **_k: DummyProc(), wait=lambda *_a, **_k: None)
+        item = pool.load("vlm", "vision", env={"APC_ENABLED": "1", "BAD": {"x": 1}})
+        self.assertEqual(item.env, {"APC_ENABLED": "1"})
 
     def test_openai_id_is_basename(self):
         pool = self._pool()

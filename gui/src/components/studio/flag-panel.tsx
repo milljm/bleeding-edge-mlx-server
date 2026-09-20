@@ -37,6 +37,7 @@ export function FlagPanel() {
   const models = useStudio((s) => s.models);
   const flags = useStudio((s) => s.flags);
   const served = useStudio((s) => s.served);
+  const engineFeatures = useStudio((s) => s.engineFeatures);
   const setFlag = useStudio((s) => s.setFlag);
   const resetFlags = useStudio((s) => s.resetFlags);
   const reloadServe = useStudio((s) => s.reloadServe);
@@ -46,12 +47,15 @@ export function FlagPanel() {
     return <p className="text-sm text-muted-foreground">Pick a model in the sidebar, or add a folder to watch.</p>;
   }
 
-  const visible = flagsFor(model.engine, false);
-  const extra = flagsFor(model.engine, true);
+  const features = engineFeatures[model.engine];
+  const featureOk = (def: FlagDef) => !def.feature || (features ?? []).includes(def.feature);
+  const visible = flagsFor(model.engine, false).filter(featureOk);
+  const extra = flagsFor(model.engine, true).filter(featureOk);
   const groups: FlagGroup[] = ["server", "sampling", "thinking"];
   const live = modelIsLive(served, model);
   const loaded = served.find((row) => modelIsLive([row], model));
-  const dirty = Boolean(live && flagsDirty(model.engine, flags, loaded?.flags));
+  const dirty = Boolean(live && flagsDirty(model.engine, flags, loaded?.flags, features));
+  const apcHidden = model.engine === "vlm" && Array.isArray(features) && !features.includes("apc");
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-8">
@@ -97,7 +101,7 @@ export function FlagPanel() {
         </div>
       </div>
       {model.engine === "lm" || model.engine === "vlm" ? (
-        <PlaygroundSampling engine={model.engine} hasReason={Boolean(model.features?.reason)} />
+        <PlaygroundSampling engine={model.engine} hasReason={Boolean(model.features?.reason)} apcHidden={apcHidden} />
       ) : null}
       <EngineCard />
       {model.engine === "lm" ? <TemplateCard /> : null}
@@ -132,7 +136,15 @@ const EFFORT_OPTIONS = [
   { value: "max", label: "Max" },
 ];
 
-function PlaygroundSampling({ engine, hasReason }: { engine: EngineKind; hasReason: boolean }) {
+function PlaygroundSampling({
+  engine,
+  hasReason,
+  apcHidden,
+}: {
+  engine: EngineKind;
+  hasReason: boolean;
+  apcHidden?: boolean;
+}) {
   const flags = useStudio((s) => s.flags);
   const setFlag = useStudio((s) => s.setFlag);
   const temp = Number(flags.temp ?? 0);
@@ -148,6 +160,13 @@ function PlaygroundSampling({ engine, hasReason }: { engine: EngineKind; hasReas
         <p className="mt-1 max-w-lg text-sm text-muted-foreground">
           These settings only affect the Playground. Client requests must set their own settings.
         </p>
+        {engine === "vlm" && apcHidden ? (
+          <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+            Prompt caching (APC) needs a newer mlx-vlm — the installed engine does not advertise it.
+            Overlay the engine with <span className="font-mono text-foreground">mlx-edge build vlm</span>,
+            then restart Edge to get the Prefix cache switches.
+          </p>
+        ) : null}
       </div>
       {engine === "vlm" ? (
         <div className="grid gap-5 sm:grid-cols-2">

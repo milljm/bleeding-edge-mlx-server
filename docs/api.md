@@ -84,10 +84,19 @@ basename (any case), `org/name`, or the path.
   by every model (RAM only — a browser reload keeps it, quitting Edge drops it).
   `PUT {turns}`. `DELETE` / `POST /v1/playground/clear` empties it.
 - `POST /v1/completions` — routed by `model`
-- `POST /v1/load` — hot-load `{engine, model, args?}` (replaces the same id).
-  `engine` is `lm` | `vlm` | `embed` | `tts` | `stt` | `rerank` | `image`. After the child is healthy, Edge sends a
+- `POST /v1/load` — hot-load `{engine, model, args?, env?}` (replaces the same id).
+  `engine` is `lm` | `vlm` | `embed` | `tts` | `stt` | `rerank` | `image`. `env` injects
+  spawn-time environment variables into the engine child — allow-listed to
+  `APC_ENABLED` / `APC_NUM_BLOCKS` / `APC_BLOCK_SIZE` and honored for `vlm`
+  only (mlx-vlm's Automatic Prefix Caching; everything else is rejected with
+  400). After the child is healthy, Edge sends a
   1-token warmup (or a tiny embed) so Metal graphs are compiled before the
   first real request. After that the child sits idle until a client hits it.
+- `GET /v1/engine-features` — what the *installed* engines support, per the
+  engine's own metadata (probed once per Edge process, never in-process):
+  `{"object": "edge.engine_features", "engines": {"lm": [], "vlm": ["apc"], …}}`.
+  The studio uses this to show or hide engine switches such as the vlm
+  prompt-cache (APC) sliders.
 - `POST /v1/unload` — unload `{model}`
 - `POST /v1/stop` — abort in-flight chat/embed for `{model}` (omit `model` to stop
   every busy engine). Closes the child so mlx-lm actually stops generating.
@@ -193,8 +202,18 @@ use Harmony `<|channel|>` tokens instead.
 
 On Serve, if the folder has no template, Edge pulls one from Hugging Face
 and passes `--chat-template` to **mlx-lm.server**. mlx-vlm.server has no
-`--chat-template` / `--temp` / `--top-p` / `--prompt-cache-size` — sampling
-is on the request, thinking is `--enable-thinking`. Playground reads those
+`--chat-template` / `--temp` / `--top-p` — sampling
+is on the request, thinking is `--enable-thinking`.
+
+**Prompt caching (vlm).** mlx-vlm has no `--prompt-cache-size` (that's
+mlx-lm's LRU pool of distinct prompt caches). Instead it ships Automatic
+Prefix Caching (APC) — one shared, paged KV pool reused across requests,
+configured by env, off by default. The studio's Engine switches expose it
+as a **Prefix cache** toggle plus a **Cache pool** slider; on Serve Edge
+sets `APC_ENABLED=1` and `APC_NUM_BLOCKS=<blocks>` (× `APC_BLOCK_SIZE`,
+default 16 → 2048 blocks ≈ 32k tokens) in the child's environment. The
+sliders appear only when the installed mlx-vlm reports the `apc` feature
+(`GET /v1/engine-features`). Playground reads those
 from Settings (VLM sliders, Playground only) and sends `temperature` / `top_p`
 on the chat request. TTS, STT, embed, rerank, and
 image-gen are their own Serve engines (scan tags kokoro / whisper / bge /

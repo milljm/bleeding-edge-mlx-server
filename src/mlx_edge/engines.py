@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from dataclasses import dataclass
 
 
@@ -87,3 +90,58 @@ def resolve_targets(name: str | None) -> list[Engine]:
     if name is None or name in {"all", "engines"}:
         return [ENGINES[k] for k in PYTHON_ENGINES]
     return [get_engine(name)]
+
+# --- Engine feature detection -----------------------------------------------
+#
+# Edge must not import engine packages in-process (the mlx wheel initializes
+# Metal). Feature support is probed with a throwaway `python -c` that reads the
+# engine's own metadata, then cached per gateway process. `mlx-edge update` /
+# `build` swap engines underneath Edge, so a restart naturally refreshes it.
+
+FEATURE_PROBE_TIMEOUT = 30.0
+
+_FEATURE_PROBES: dict[str, str] = {
+    # mlx-vlm: APC (Automatic Prefix Caching) is configured through server
+    # settings / env vars, so its knob list is the capability surface.
+    "vlm": (
+        "import json\n"
+        "from mlx_vlm.server import runtime_config as rc\n"
+        "names = [k[0] for k in getattr(rc, 'KNOBS', ())]\n"
+        "if not names:\n"
+        "    spec = getattr(rc, '_KNOB_SPEC', None)\n"
+        "    names = list(spec) if isinstance(spec, dict) else []\n"
+        "print(json.dumps(sorted(set(names))))\n"
+    ),
+}
+
+# Map a knob name found in an engine's metadata to an Edge feature id.
+_KNOB_FEATURES: dict[str, str] = {"apc_enabled": "apc"}
+
+_features_cache: dict[str, frozenset[str]] = {}
+
+
+def engine_features(engine_id: str) -> frozenset[str]:
+    """Feature ids the installed engine supports (cached; empty when unknown).
+
+    Probes never raise and never import engines in-process: a missing or broken
+    engine simply reports no features, so callers degrade gracefully.
+    """
+    if engine_id in _features_cache:
+        return _features_cache[engine_id]
+    source = _FEATURE_PROBES.get(engine_id)
+    features: frozenset[str] = frozenset()
+    if source:
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-c", source],
+                capture_output=True,
+                text=True,
+                timeout=FEATURE_PROBE_TIMEOUT,
+            )
+            if proc.returncode == 0:
+                names = set(json.loads(proc.stdout.strip() or "[]"))
+                features = frozenset(_KNOB_FEATURES[n] for n in names if n in _KNOB_FEATURES)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            features = frozenset()
+    _features_cache[engine_id] = features
+    return features

@@ -14,6 +14,13 @@ export type FlagDef = {
   always?: boolean;
   /** Edge-only: stored in prefs, never passed to mlx-lm / mlx-vlm. */
   edge?: boolean;
+  /**
+   * Transport this value as a spawn-time environment variable instead of a
+   * CLI arg (Edge launches the engine processes). Pairs with `edge: true`.
+   */
+  envVar?: string;
+  /** Only offered when the installed engine reports this feature (GET /v1/engine-features). */
+  feature?: string;
   min?: number;
   max?: number;
   step?: number;
@@ -305,6 +312,52 @@ export const FLAG_DEFS: FlagDef[] = [
     default: 20,
   },
   {
+    key: "apcEnabled",
+    flag: "--apc",
+    envVar: "APC_ENABLED",
+    feature: "apc",
+    label: "Prefix cache",
+    help: "Reuse KV prefixes across requests (mlx-vlm APC). Edge sets APC_ENABLED=1 on Serve.",
+    type: "bool",
+    engines: ["vlm"],
+    group: "server",
+    edge: true,
+    default: false,
+  },
+  {
+    key: "apcCacheBlocks",
+    flag: "--apc-num-blocks",
+    envVar: "APC_NUM_BLOCKS",
+    feature: "apc",
+    label: "Cache pool",
+    help: "Shared prefix-cache pool capacity in blocks. 2048 blocks × 16 tokens ≈ 32k tokens. Applies with Reload.",
+    type: "number",
+    engines: ["vlm"],
+    group: "server",
+    edge: true,
+    min: 128,
+    max: 16384,
+    step: 128,
+    default: 2048,
+  },
+  {
+    key: "apcBlockSize",
+    flag: "--apc-block-size",
+    envVar: "APC_BLOCK_SIZE",
+    feature: "apc",
+    label: "Cache block",
+    help: "Tokens hashed per prefix-cache block.",
+    type: "number",
+    engines: ["vlm"],
+    group: "server",
+    edge: true,
+    advanced: true,
+    min: 8,
+    max: 64,
+    step: 8,
+    default: 16,
+  },
+  {
     key: "thinkingBudget",
     flag: "--thinking-budget",
     label: "Thinking budget",
@@ -397,9 +450,45 @@ export function flagArgs(engine: EngineKind, values: FlagValues, omit: string[] 
   return args;
 }
 
-export function flagsDirty(engine: EngineKind, current: FlagValues, loaded?: FlagValues | null) {
+/**
+ * Values for defs transported as spawn-time environment variables instead of
+ * CLI args (Edge launches the engine processes; see /v1/load `env`). Bools are
+ * emitted as "1" when on and omitted when off (matches the engine default of
+ * disabled). Numbers of the same feature ride along only while that feature's
+ * bool is enabled, and only when they differ from their default — the child is
+ * freshly spawned on every load, so the engine default applies otherwise.
+ * Without `features` (unknown support), nothing is emitted.
+ */
+export function envArgs(
+  engine: EngineKind,
+  values: FlagValues,
+  features?: string[],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const supported = (def: FlagDef) => !def.feature || (features ?? []).includes(def.feature);
+  const defs = FLAG_DEFS.filter((d) => Boolean(d.envVar) && d.engines.includes(engine) && supported(d));
+  const featureOn = new Map<string | undefined, boolean>();
+  for (const def of defs) {
+    if (def.type !== "bool") continue;
+    featureOn.set(def.feature, (values[def.key] ?? def.default) === true);
+  }
+  for (const def of defs) {
+    if (def.type === "bool") {
+      if ((values[def.key] ?? def.default) === true) out[def.envVar] = "1";
+      continue;
+    }
+    if (featureOn.get(def.feature) === false) continue;
+    const value = values[def.key] ?? def.default;
+    if (value === def.default || value === "") continue;
+    out[def.envVar] = String(value);
+  }
+  return out;
+}
+
+export function flagsDirty(engine: EngineKind, current: FlagValues, loaded?: FlagValues | null, features?: string[]) {
   if (!loaded) return false;
-  return JSON.stringify(flagArgs(engine, current, ["host", "port"])) !== JSON.stringify(flagArgs(engine, loaded, ["host", "port"]));
+  const key = (v: FlagValues) => JSON.stringify([flagArgs(engine, v, ["host", "port"]), envArgs(engine, v, features)]);
+  return key(current) !== key(loaded);
 }
 
 export function flagsForModel(
