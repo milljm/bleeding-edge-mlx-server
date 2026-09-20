@@ -47,12 +47,15 @@ class EngineFeatureTests(unittest.TestCase):
     def test_live_vlm_probe_reports_apc_when_present(self):
         """Smoke against the real env; skips silently when mlx-vlm is absent."""
         try:
-            subprocess.run(
+            probe = subprocess.run(
                 [engines.sys.executable, "-c", "import mlx_vlm"],
                 capture_output=True,
                 timeout=30,
             )
         except (OSError, subprocess.SubprocessError):
+            self.skipTest("mlx-vlm not installed")
+        if probe.returncode != 0:
+            # import mlx_vlm failed (e.g. not installed on CI): skip, don't fail.
             self.skipTest("mlx-vlm not installed")
         self.assertIn("apc", engine_features("vlm"))
 
