@@ -14,3 +14,4 @@ dist/
 .pytest_cache/
 node_modules/
 gui/dist/
+gui/package-lock.json
