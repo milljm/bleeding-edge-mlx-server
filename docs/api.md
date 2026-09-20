@@ -35,6 +35,21 @@ basename (any case), `org/name`, or the path.
   chat without tools still streams token-by-token. If MiniMax never emits a
   closer, the buffered text is promoted back to `content` so the reply is not
   empty. Embedding models return 400 here — use `/v1/embeddings`.
+
+  A top-level `reasoning_effort` string controls reasoning depth where the
+  checkpoint supports it. For lm engines the gateway folds it into
+  `chat_template_kwargs` before proxying — the channel mlx-lm.server feeds into
+  `apply_chat_template`; an explicit `chat_template_kwargs.reasoning_effort`
+  always wins. mlx-vlm's server reads top-level `reasoning_effort` natively
+  (it also honors `reasoning: {"effort": …}` and per-request
+  `enable_thinking`), so those bodies pass through untouched. GLM-5.3 /
+  GLM-5.3-Flash templates honor only `low` and `high`; anything else —
+  including unset — falls back to the checkpoint default `max`, and reasoning
+  is always on (it cannot be disabled on those checkpoints). Studio's
+  Playground card sends `reasoning_effort` per request for both engines;
+  other clients are unaffected unless they send the field themselves.
+  Template kwargs a template does not read are inert (`clear_thinking` is
+  GLM-5.3's second knob).
 - `POST /v1/embeddings` — OpenAI embeddings. Routed to a loaded `embed` engine
   (`mlx_vlm.server --embedding-model`). Body `model` is pinned to the spawn
   path. Does not touch chat children.

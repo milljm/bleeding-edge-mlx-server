@@ -161,9 +161,26 @@ def prepare_chat_body(body: dict[str, Any], item: LoadedModel) -> dict[str, Any]
     Cline's context bar is `usage.prompt_tokens / context_length`. mlx-lm only
     emits usage on SSE when `stream_options.include_usage` is true. LM Studio
     always includes it; we do the same.
+
+    For lm engines, a top-level `reasoning_effort` is folded into
+    `chat_template_kwargs` — the channel mlx-lm.server feeds into
+    apply_chat_template, which is where GLM-5.3-style checkpoints read it.
+    (mlx-vlm's server reads top-level `reasoning_effort` natively, so vlm
+    bodies pass through untouched.) An explicit
+    `chat_template_kwargs.reasoning_effort` always wins.
     """
     out = dict(body)
     out["model"] = item.model
+    if item.engine == "lm":
+        effort = body.get("reasoning_effort")
+        if isinstance(effort, str) and effort.strip():
+            kwargs = out.get("chat_template_kwargs")
+            if not isinstance(kwargs, dict):
+                kwargs = {}
+            else:
+                kwargs = dict(kwargs)
+            kwargs.setdefault("reasoning_effort", effort.strip())
+            out["chat_template_kwargs"] = kwargs
     if wants_stream(out):
         opts = out.get("stream_options")
         opts = dict(opts) if isinstance(opts, dict) else {}

@@ -14,14 +14,14 @@ import { flagKey, formatContext, loadTarget, modelOrigin, type ModelRec } from "
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
 
-const SEE_ENDPOINT = " See Endpoint for more information on how to use this model.";
+const SEE_ENDPOINT = " See Endpoint for a ready-to-paste request.";
 
 const SPECIAL_BLURB: Partial<Record<EngineKind, string>> = {
-  embed: " Embedding models answer POST /v1/embeddings — they do not chat." + SEE_ENDPOINT,
-  tts: " TTS models answer POST /v1/audio/speech — Playground stays text-only." + SEE_ENDPOINT,
-  stt: " STT models answer POST /v1/audio/transcriptions — Playground stays text-only." + SEE_ENDPOINT,
-  rerank: " Rerankers answer POST /v1/rerank — Playground stays text-only." + SEE_ENDPOINT,
-  image: " Image models answer POST /v1/images/generations — Playground stays text-only." + SEE_ENDPOINT,
+  embed: " This model creates embeddings, not chat replies." + SEE_ENDPOINT,
+  tts: " This model turns text into speech." + SEE_ENDPOINT,
+  stt: " This model turns audio into text." + SEE_ENDPOINT,
+  rerank: " This model ranks documents against a query." + SEE_ENDPOINT,
+  image: " This model generates images." + SEE_ENDPOINT,
 };
 
 const GROUP_LABEL: Record<FlagGroup, string> = {
@@ -59,16 +59,15 @@ export function FlagPanel() {
         <div>
           <h2 className="text-lg font-medium tracking-tight">Engine switches</h2>
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-            Settings for {model.name} only — they stick when you close Edge.
-            {formatContext(model.context) ? ` Context window ${formatContext(model.context)}.` : ""}{" "}
-            These map 1:1 onto {engineLabel(model.engine)} flags.
+            Settings for {model.name}, saved automatically.
+            {formatContext(model.context) ? ` Context window ${formatContext(model.context)}.` : ""}
             {SPECIAL_BLURB[model.engine]
               ? SPECIAL_BLURB[model.engine]
               : live
                 ? dirty
-                  ? " Flags changed on a running model — Reload to apply them."
-                  : " Change a flag and Reload to apply it without unloading the others."
-                : " Serve hot-loads this model beside any that are already up."}
+                  ? " Reload to apply your changes."
+                  : ""
+                : " Serve the model to use it."}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -97,39 +96,8 @@ export function FlagPanel() {
           </Button>
         </div>
       </div>
-      {model.engine === "embed" ? (
-        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
-          This is an embedding model. Serve it, then POST <span className="font-mono text-foreground">/v1/embeddings</span>.
-          Keep a chat model loaded too — RAG does not unload it.
-          See Endpoint for more information on how to use this model.
-        </p>
-      ) : model.engine === "tts" ? (
-        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
-          This is a text-to-speech model. Serve it, then POST{" "}
-          <span className="font-mono text-foreground">/v1/audio/speech</span> with{" "}
-          <span className="font-mono text-foreground">{`{"model","input"}`}</span>. Playground stays text-only.
-          See Endpoint for more information on how to use this model.
-        </p>
-      ) : model.engine === "stt" ? (
-        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
-          This is a speech-to-text model. Serve it, then POST{" "}
-          <span className="font-mono text-foreground">/v1/audio/transcriptions</span> (multipart file + model).
-          Playground stays text-only. See Endpoint for more information on how to use this model.
-        </p>
-      ) : model.engine === "rerank" ? (
-        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
-          This is a reranker. Serve it, then POST <span className="font-mono text-foreground">/v1/rerank</span> with{" "}
-          <span className="font-mono text-foreground">{`{"query","documents"}`}</span>. Playground stays text-only.
-          See Endpoint for more information on how to use this model.
-        </p>
-      ) : model.engine === "image" ? (
-        <p className="rounded-2xl bg-card px-4 py-3 text-sm text-muted-foreground shadow-[var(--shadow-border)]">
-          This is an image-generation model. Serve it, then POST{" "}
-          <span className="font-mono text-foreground">/v1/images/generations</span>. Playground stays text-only.
-          See Endpoint for more information on how to use this model.
-        </p>
-      ) : model.engine === "vlm" ? (
-        <VlmPlaygroundSampling />
+      {model.engine === "lm" || model.engine === "vlm" ? (
+        <PlaygroundSampling engine={model.engine} hasReason={Boolean(model.features?.reason)} />
       ) : null}
       <EngineCard />
       {model.engine === "lm" ? <TemplateCard /> : null}
@@ -157,54 +125,80 @@ export function FlagPanel() {
   );
 }
 
-function VlmPlaygroundSampling() {
+const EFFORT_OPTIONS = [
+  { value: "", label: "Model default" },
+  { value: "low", label: "Low" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Max" },
+];
+
+function PlaygroundSampling({ engine, hasReason }: { engine: EngineKind; hasReason: boolean }) {
   const flags = useStudio((s) => s.flags);
   const setFlag = useStudio((s) => s.setFlag);
   const temp = Number(flags.temp ?? 0);
   const topP = Number(flags.topP ?? 1);
+  const effort = String(flags.reasoningEffort ?? "");
 
   return (
     <section className="space-y-4 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
-      <p className="text-sm text-muted-foreground">
-        mlx-vlm.server has no <span className="font-mono text-foreground">--temp</span> /{" "}
-        <span className="font-mono text-foreground">--top-p</span> /{" "}
-        <span className="font-mono text-foreground">--prompt-cache-size</span> — those are mlx-lm
-        defaults. Send sampling on the request.
-      </p>
-      <p className="text-sm text-foreground">
-        These sliders apply to Playground only. They are not mlx-vlm.server flags, and they do not
-        affect Cline or any other client.
-      </p>
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <Label htmlFor="playground-temp">Temperature</Label>
-            <span className="font-mono text-xs text-muted-foreground tabular-nums">{temp}</span>
-          </div>
-          <Slider
-            id="playground-temp"
-            min={0}
-            max={2}
-            step={0.05}
-            value={[temp]}
-            onValueChange={([next]) => setFlag("temp", next ?? 0)}
-          />
-        </div>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <Label htmlFor="playground-top-p">Top-p</Label>
-            <span className="font-mono text-xs text-muted-foreground tabular-nums">{topP}</span>
-          </div>
-          <Slider
-            id="playground-top-p"
-            min={0}
-            max={1}
-            step={0.01}
-            value={[topP]}
-            onValueChange={([next]) => setFlag("topP", next ?? 1)}
-          />
-        </div>
+      <div>
+        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          Playground
+        </h3>
+        <p className="mt-1 max-w-lg text-sm text-muted-foreground">
+          These settings only affect the Playground. Client requests must set their own settings.
+        </p>
       </div>
+      {engine === "vlm" ? (
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="playground-temp">Temperature</Label>
+              <span className="font-mono text-xs text-muted-foreground tabular-nums">{temp}</span>
+            </div>
+            <Slider
+              id="playground-temp"
+              min={0}
+              max={2}
+              step={0.05}
+              value={[temp]}
+              onValueChange={([next]) => setFlag("temp", next ?? 0)}
+            />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="playground-top-p">Top-p</Label>
+              <span className="font-mono text-xs text-muted-foreground tabular-nums">{topP}</span>
+            </div>
+            <Slider
+              id="playground-top-p"
+              min={0}
+              max={1}
+              step={0.01}
+              value={[topP]}
+              onValueChange={([next]) => setFlag("topP", next ?? 1)}
+            />
+          </div>
+        </div>
+      ) : null}
+      {hasReason ? (
+        <div className="space-y-2">
+          <Label htmlFor="reasoningEffort">Reasoning effort</Label>
+          <select
+            id="reasoningEffort"
+            className="flex h-11 w-full rounded-md border border-input bg-card px-3 text-sm"
+            value={effort}
+            onChange={(e) => setFlag("reasoningEffort", e.target.value)}
+          >
+            {EFFORT_OPTIONS.map((opt) => (
+              <option key={opt.value || "default"} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">Reasoning depth for Playground replies.</p>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -235,10 +229,8 @@ function EngineCard() {
       <div>
         <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Engine</h3>
         <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-          Scan guessed {engineLabel(detected)} from the checkpoint. Force mlx-lm when a model looks
-          multimodal but the working loader is a patched mlx-lm. Overlay that class with{" "}
-          <span className="font-mono text-foreground">mlx-edge build --help</span>.
-          {live ? " Reload after changing a loaded model." : " Serve from the model card."}
+          Detected {engineLabel(detected)} from the model files. Change this only if the model
+          misbehaves.
         </p>
       </div>
       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Engine">
@@ -285,11 +277,11 @@ function TemplateCard() {
     try {
       const info = await fetchTemplate({ model: loadTarget(model), repo: model.repo });
       if (!info.chat_template) {
-        setNote("No template on the Hub for this repo. Paste Jinja below, then Reload.");
+        setNote("No template found on Hugging Face. Paste one below, then Reload.");
         return;
       }
       setFlag("chatTemplate", info.chat_template);
-      setNote(info.bundled ? "Using the checkpoint template." : `Loaded from ${info.source || "Hugging Face"}. Reload to apply.`);
+      setNote(info.bundled ? "Using the model's own template." : `Loaded from ${info.source || "Hugging Face"}. Reload to apply.`);
     } catch (err) {
       setNote(err instanceof Error ? err.message : "Fetch failed");
     } finally {
@@ -304,8 +296,8 @@ function TemplateCard() {
           <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Chat template</h3>
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             {bundled
-              ? "This checkpoint already has a tokenizer chat_template. mlx-lm will apply it."
-              : "No chat_template in this checkpoint. Edge pulls one from Hugging Face on Serve. MiniMax-M2 / M2.7 open <think> in the generation prompt so tokens stream; ConfigI / gpt-oss use Harmony <|channel|>."}
+              ? "This model ships with its own chat template."
+              : "This model has no chat template — Edge fetches one from Hugging Face on Serve."}
           </p>
         </div>
         <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void pull()}>
@@ -314,12 +306,12 @@ function TemplateCard() {
       </div>
       {note ? <p className="text-xs text-ok">{note}</p> : null}
       <div className="space-y-2">
-        <Label htmlFor="chatTemplate">Jinja override</Label>
+        <Label htmlFor="chatTemplate">Custom template</Label>
         <Textarea
           id="chatTemplate"
           value={String(flags.chatTemplate || "")}
           onChange={(e) => setFlag("chatTemplate", e.target.value)}
-          placeholder="Leave empty to use the checkpoint (or the template Edge injects on Serve when missing)."
+          placeholder="Leave empty to use the model's own template."
           className="min-h-28 font-mono text-xs"
         />
       </div>
@@ -328,7 +320,7 @@ function TemplateCard() {
           <Label htmlFor="useDefaultChatTemplate" className="text-foreground">
             Default chat template
           </Label>
-          <p className="mt-1 text-xs text-muted-foreground">Force the tokenizer default instead of the override.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Use the built-in template instead of the override.</p>
         </div>
         <Switch
           id="useDefaultChatTemplate"
@@ -351,8 +343,7 @@ function TokenReplaceCard() {
       <div>
         <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Token replace</h3>
         <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-          Exact <span className="font-mono text-foreground">{"{target : replace}"}</span> pairs, one per line. Applied as
-          tokens stream. Next request — no Reload.
+          Swap text in replies, one <span className="font-mono text-foreground">{"{old : new}"}</span> pair per line.
         </p>
       </div>
       <div className="space-y-2">

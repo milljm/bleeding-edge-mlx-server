@@ -114,8 +114,7 @@ function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: nu
     return (
       <div className="flex flex-1 flex-col items-start justify-center">
         <p className="max-w-md text-sm text-muted-foreground">
-          Serve this embedding model. It answers POST /v1/embeddings on the same /v1 as your chat
-          models — RAG does not unload them.
+          Serve this model, then enter text to see its embedding.
         </p>
       </div>
     );
@@ -125,9 +124,7 @@ function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: nu
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
         <p className="pt-6 text-sm text-muted-foreground">
-          POST /v1/embeddings on the already-loaded engine. Keep a chat model served too — embedding
-          inference is a separate process, so it does not add delay to the next chat token.
-          {loadedCount > 1 ? ` ${loadedCount} loaded on this origin.` : ""}
+          Enter text to see its embedding. Chat models can stay loaded at the same time.
         </p>
         {result ? (
           <article className="mr-auto max-w-[85%] rounded-2xl bg-card px-4 py-3 text-sm shadow-[var(--shadow-border)]">
@@ -178,20 +175,12 @@ function EmbedPlayground({ live, loadedCount }: { live: boolean; loadedCount: nu
 }
 
 function AudioHint({ engine, live }: { engine: EngineKind; live: boolean }) {
-  const route =
-    engine === "tts"
-      ? "/v1/audio/speech"
-      : engine === "stt"
-        ? "/v1/audio/transcriptions"
-        : engine === "rerank"
-          ? "/v1/rerank"
-          : "/v1/images/generations";
   return (
     <div className="flex flex-1 flex-col items-start justify-center">
       <p className="max-w-md text-sm text-muted-foreground">
         {live
-          ? `Playground is text-only. This ${engine.toUpperCase()} model is served — POST ${route} from any OpenAI-compatible client. See Endpoint for more information on how to use this model.`
-          : `Serve this ${engine.toUpperCase()} model to expose ${route}. Playground stays text-only. See Endpoint for more information on how to use this model.`}
+          ? "Playground is text-only. See Endpoint for a ready-to-paste request."
+          : "Serve this model to use it from your apps. Playground stays text-only — see Endpoint."}
       </p>
     </div>
   );
@@ -372,6 +361,9 @@ function ChatPlayground({ live }: { live: boolean }) {
                 top_p: Number(flags.topP ?? 1),
               }
             : {}),
+          ...(String(flags.reasoningEffort || "")
+            ? { reasoning_effort: String(flags.reasoningEffort) }
+            : {}),
           stream: true,
         }),
         signal: ac.signal,
@@ -474,8 +466,8 @@ function ChatPlayground({ live }: { live: boolean }) {
       <div className="flex flex-1 flex-col items-start justify-center">
         <p className="max-w-md text-sm text-muted-foreground">
           {served.length
-            ? `${served.length} model${served.length === 1 ? "" : "s"} already loaded. Serve this one to hot-load it beside them on the same /v1.`
-            : "Serve a model first. Each Serve hot-loads into the same OpenAI /v1 — you can keep several loaded at once."}
+            ? `${served.length} already loaded — serve this one to chat with it. Several can stay loaded at once.`
+            : "Serve the model first. Several can stay loaded at once."}
         </p>
       </div>
     );
@@ -506,9 +498,7 @@ function ChatPlayground({ live }: { live: boolean }) {
         className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1"
       >
         {turns.length === 0 ? (
-          <p className="pt-6 text-sm text-muted-foreground">
-            Streaming POST /v1/chat/completions on the already-loaded engine. {served.length} loaded on this origin.
-          </p>
+          <p className="pt-6 text-sm text-muted-foreground">Send a message to start.</p>
         ) : (
           turns.map((turn, i) => (
             <TurnCard
@@ -525,7 +515,7 @@ function ChatPlayground({ live }: { live: boolean }) {
         )}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
         {!live ? (
-          <p className="text-xs text-muted-foreground">Serve this model to keep chatting. Transcript stays until Edge exits.</p>
+          <p className="text-xs text-muted-foreground">Serve this model to keep chatting. The conversation stays until Edge exits.</p>
         ) : null}
       </div>
       <form

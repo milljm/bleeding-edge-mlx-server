@@ -1567,6 +1567,140 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body.get("stopped"), [])
 
+    def _lm_item(self, port: int = 0) -> "LoadedModel":
+        from mlx_edge.pool import LoadedModel
+
+        return LoadedModel(
+            id="GLM-5.3-Flash-MLX-6bit",
+            engine="lm",
+            model="/models/GLM-5.3-Flash-MLX-6bit",
+            port=port,
+            started_at=0.0,
+            public_id="GLM-5.3-Flash-MLX-6bit",
+        )
+
+    def test_reasoning_effort_folds_into_chat_template_kwargs(self):
+        from mlx_edge.gateway import prepare_chat_body
+        from mlx_edge.pool import LoadedModel
+
+        item = self._lm_item()
+        body = prepare_chat_body(
+            {
+                "model": "glm",
+                "messages": [{"role": "user", "content": "hi"}],
+                "reasoning_effort": "low",
+            },
+            item,
+        )
+        self.assertEqual(body["chat_template_kwargs"], {"reasoning_effort": "low"})
+        self.assertEqual(body["reasoning_effort"], "low")
+
+        # An explicit chat_template_kwargs value always wins.
+        body = prepare_chat_body(
+            {
+                "model": "glm",
+                "messages": [],
+                "reasoning_effort": "low",
+                "chat_template_kwargs": {"reasoning_effort": "high"},
+            },
+            item,
+        )
+        self.assertEqual(body["chat_template_kwargs"], {"reasoning_effort": "high"})
+
+        # Other template kwargs survive the fold.
+        body = prepare_chat_body(
+            {
+                "model": "glm",
+                "messages": [],
+                "reasoning_effort": "high",
+                "chat_template_kwargs": {"clear_thinking": True},
+            },
+            item,
+        )
+        self.assertEqual(
+            body["chat_template_kwargs"],
+            {"clear_thinking": True, "reasoning_effort": "high"},
+        )
+
+        # Non-string effort values are ignored; no kwargs invented.
+        body = prepare_chat_body({"model": "glm", "messages": [], "reasoning_effort": 3}, item)
+        self.assertNotIn("chat_template_kwargs", body)
+        body = prepare_chat_body({"model": "glm", "messages": [], "reasoning_effort": ""}, item)
+        self.assertNotIn("chat_template_kwargs", body)
+
+        # No effort in the request -> no kwargs invented. The Settings
+        # control is Playground-only: it rides on the request, it is not a
+        # server-side default for other clients.
+        body = prepare_chat_body({"model": "glm", "messages": []}, item)
+        self.assertNotIn("chat_template_kwargs", body)
+
+        # Non-lm engines are untouched.
+        vlm = LoadedModel(
+            id="vlm",
+            engine="vlm",
+            model="/models/vlm",
+            port=0,
+            started_at=0.0,
+            public_id="vlm",
+        )
+        body = prepare_chat_body({"model": "x", "messages": [], "reasoning_effort": "low"}, vlm)
+        self.assertNotIn("chat_template_kwargs", body)
+
+    def test_reasoning_effort_reaches_engine_body(self):
+        from http.server import BaseHTTPRequestHandler
+
+        class EchoBody(BaseHTTPRequestHandler):
+            seen: dict = {}
+
+            def log_message(self, fmt: str, *args: object) -> None:
+                return
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                EchoBody.seen = json.loads(self.rfile.read(length).decode() or "{}")
+                payload = json.dumps(
+                    {
+                        "id": "x",
+                        "object": "chat.completion",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "message": {"role": "assistant", "content": "ok"},
+                            }
+                        ],
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        engine_port = free_port()
+        httpd = ThreadingHTTPServer(("127.0.0.1", engine_port), EchoBody)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            item = self._lm_item(port=engine_port)
+            self.pool._models[item.id] = item
+            status, _ = self._json(
+                "POST",
+                "/v1/chat/completions",
+                {
+                    "model": "GLM-5.3-Flash-MLX-6bit",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "reasoning_effort": "low",
+                },
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(EchoBody.seen.get("chat_template_kwargs"), {"reasoning_effort": "low"})
+            self.assertEqual(EchoBody.seen.get("reasoning_effort"), "low")
+            self.assertEqual(EchoBody.seen.get("model"), "/models/GLM-5.3-Flash-MLX-6bit")
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

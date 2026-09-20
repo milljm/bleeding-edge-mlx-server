@@ -279,7 +279,7 @@ function ServingUrl({ url, bind }: { url: string; bind: string }) {
     <button
       type="button"
       className="flex min-w-0 shrink-0 items-center gap-1.5 text-right hover:text-foreground"
-      title={remote ? `Bound on ${bind}. Copy OpenAI base URL` : "Copy OpenAI base URL"}
+      title={remote ? `Listening on ${bind} — copy the endpoint URL` : "Copy the endpoint URL"}
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(url);

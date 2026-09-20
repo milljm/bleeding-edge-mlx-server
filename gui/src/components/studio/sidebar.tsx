@@ -77,17 +77,17 @@ export function Sidebar({
   }
 
   const emptyHint = !watchDirs.length
-    ? "Add a folder to watch, or Hugging Face / LM Studio / Ollama. MLX-Edge lists checkpoints it finds (config.json + weights)."
+    ? "Add a folder that holds your models — Hugging Face, LM Studio, and Ollama folders work too."
     : scanning
       ? "Scanning folders…"
-      : "No models in these folders. Point at a directory that contains MLX checkpoints.";
+      : "No models here yet. Point at a folder with MLX models.";
 
   return (
     <aside className="flex h-full min-h-0 flex-col bg-card paper">
       <div className="flex items-center gap-2 px-4 pb-3 pt-4">
         <div className="min-w-0 flex-1">
           <p className="font-display text-2xl italic leading-none tracking-tight">MLX-Edge</p>
-          <p className="mt-1 text-xs text-muted-foreground">A front-end for mlx-lm, mlx-vlm</p>
+          <p className="mt-1 text-xs text-muted-foreground">Run and chat with MLX models</p>
         </div>
         {onCollapse ? (
           <Button type="button" variant="ghost" size="icon-sm" aria-label="Collapse sidebar" onClick={onCollapse}>
@@ -184,7 +184,7 @@ export function Sidebar({
             />
           </div>
           {loadedCount > 0 ? (
-            <p className="mt-2 text-xs text-ok">{loadedCount} hot-loaded on /v1</p>
+            <p className="mt-2 text-xs text-ok">{loadedCount} loaded</p>
           ) : null}
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-visible px-2 pb-3 pt-2">
@@ -471,7 +471,7 @@ function HubPanel() {
   const [draft, setDraft] = useState("");
   const [token, setToken] = useState(false);
   const [help, setHelp] = useState(
-    "Create a Hugging Face account, copy a token from huggingface.co/settings/tokens, then launch edge-gui with HF_TOKEN set.",
+    "Some downloads need a Hugging Face token — create one at huggingface.co/settings/tokens, then start Edge with HF_TOKEN set.",
   );
   const [results, setResults] = useState<HubQuant[]>([]);
   const [picked, setPicked] = useState("");
@@ -660,7 +660,7 @@ function HubPanel() {
               .
             </>
           ) : (
-            "Paste a Hub URL or org/name. Dropdown lists MLX quants."
+            "Paste a Hugging Face link, then pick a size."
           )}
         </p>
       )}

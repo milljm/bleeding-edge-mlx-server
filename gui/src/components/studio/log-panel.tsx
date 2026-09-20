@@ -123,13 +123,11 @@ export function LogPanel() {
         className="min-h-0 flex-1 overflow-auto rounded-2xl bg-card px-3 py-3 font-mono text-xs leading-5 shadow-[var(--shadow-border)]"
       >
         {paused ? (
-          <p className="mb-2 text-xs text-warn">Paused — missed lines are dropped. Resume continues from live.</p>
+          <p className="mb-2 text-xs text-warn">Paused — new lines are not captured.</p>
         ) : null}
         {visible.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            {served.length
-              ? "Waiting for engine output. Serve, chat, or embed and the child stdout lands here."
-              : "Serve a model to stream engine logs."}
+            {served.length ? "Waiting for activity." : "Serve a model to see its log."}
           </p>
         ) : (
           <ol className="space-y-0.5">

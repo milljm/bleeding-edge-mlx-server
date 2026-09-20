@@ -25,12 +25,9 @@ export function EndpointPanel() {
       <div>
         <h2 className="text-lg font-medium tracking-tight">OpenAI endpoint</h2>
         <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-          Point a client at <span className="font-mono font-medium text-foreground">{base}</span>.
-          Pass the basename as <span className="font-mono">model</span>. Request{" "}
-          <span className="font-mono">temperature</span>, <span className="font-mono">top_p</span>,{" "}
-          <span className="font-mono">top_k</span>, and <span className="font-mono">min_p</span> override
-          the spawn defaults. Bind with <span className="font-mono">edge-gui --host 0.0.0.0</span> for
-          remote clients.
+          Point any OpenAI-compatible app at{" "}
+          <span className="font-mono font-medium text-foreground">{base}</span> and use the model name
+          shown in the examples.
         </p>
       </div>
       {served.length ? (
@@ -43,7 +40,7 @@ export function EndpointPanel() {
         </ul>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Nothing loaded. Serve hot-loads into mlx-edge without replacing models that are already up.
+          Nothing loaded yet. Serving a model leaves the others running.
         </p>
       )}
       {embed ? (
