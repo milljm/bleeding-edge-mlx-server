@@ -5,7 +5,7 @@ export type FlagGroup =
   | "sampling"
   | "thinking"
   | "template"
-  | "replace"
+  | "masking"
   | "cache"
   | "performance"
   | "misc";
@@ -140,7 +140,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Replace text inside the model's thinking.",
     type: "text",
     engines: ["lm", "vlm"],
-    group: "replace",
+    group: "masking",
     edge: true,
     default: "",
   },
@@ -151,7 +151,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Replace text inside the reply.",
     type: "text",
     engines: ["lm", "vlm"],
-    group: "replace",
+    group: "masking",
     edge: true,
     default: "",
   },
@@ -208,7 +208,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Extra template options as JSON.",
     type: "text",
     engines: ["lm"],
-    group: "misc",
+    group: "template",
     advanced: true,
     default: "",
   },
@@ -285,7 +285,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "How much of the prompt is read per step.",
     type: "number",
     engines: ["lm", "vlm"],
-    group: "performance",
+    group: "cache",
     advanced: true,
     min: 64,
     max: 8192,
@@ -356,7 +356,7 @@ export const FLAG_DEFS: FlagDef[] = [
     group: "cache",
     edge: true,
     min: 8,
-    max: 64,
+    max: 512,
     step: 8,
     default: 16,
   },

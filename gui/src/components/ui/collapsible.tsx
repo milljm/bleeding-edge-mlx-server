@@ -22,7 +22,7 @@ export function Collapsible({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <section className="rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
+    <section className="rounded-2xl bg-card px-5 py-4 shadow-[var(--shadow-border)]">
       <button
         type="button"
         aria-expanded={open}
