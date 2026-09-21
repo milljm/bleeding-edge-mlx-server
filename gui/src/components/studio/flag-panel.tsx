@@ -10,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { engineLabel } from "@/lib/command";
 import { fetchTemplate, modelIsLive, postHubDelete } from "@/lib/edge-api";
-import { flagsDirty, flagsFor, type EngineKind, type FlagDef } from "@/lib/flags";
+import { FLAG_DEFS, flagsDirty, flagsFor, type EngineKind, type FlagDef } from "@/lib/flags";
 import { flagKey, formatContext, loadTarget, modelOrigin, type ModelRec } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
@@ -150,8 +150,26 @@ export function FlagPanel() {
           <FlagGrid defs={cacheDefs} values={flags} onChange={setFlag} models={models} current={model} />
         </Collapsible>
       ) : null}
-      {model.engine === "lm" ? <TemplateBubble /> : null}
-      {model.engine === "lm" || model.engine === "vlm" ? <TokenReplaceBubble /> : null}
+      {model.engine === "lm" ? (
+        <Collapsible
+          title="Prompt Templates"
+          hint="Jinja chat templates: override the model's own template or pull one from Hugging Face."
+        >
+          <TemplateBubble />
+        </Collapsible>
+      ) : null}
+      {model.engine === "lm" || model.engine === "vlm" ? (
+        <Collapsible
+          title="Masking"
+          hint={
+            <>
+              Swap text in replies, one <span className="font-mono text-foreground">{"{old : new}"}</span> pair per line.
+            </>
+          }
+        >
+          <TokenReplaceBubble />
+        </Collapsible>
+      ) : null}
       {performanceDefs.length ? (
         <Collapsible
           title="Performance"
@@ -329,6 +347,7 @@ function EngineBubble() {
 
 function TemplateBubble() {
   const model = useStudio((s) => s.selected());
+  const models = useStudio((s) => s.models);
   const flags = useStudio((s) => s.flags);
   const setFlag = useStudio((s) => s.setFlag);
   const [busy, setBusy] = useState(false);
@@ -337,6 +356,7 @@ function TemplateBubble() {
   if (!model) return null;
   const bundled = Boolean(model.hasChatTemplate);
   const override = String(flags.chatTemplate || "").trim();
+  const argsDef = FLAG_DEFS.find((d) => d.key === "chatTemplateArgs");
 
   async function pull() {
     if (!model) return;
@@ -393,6 +413,15 @@ function TemplateBubble() {
           onCheckedChange={(checked) => setFlag("useDefaultChatTemplate", checked)}
         />
       </div>
+      {argsDef ? (
+        <FlagField
+          def={argsDef}
+          value={flags.chatTemplateArgs ?? argsDef.default}
+          onChange={setFlag}
+          models={models}
+          current={model}
+        />
+      ) : null}
       {override ? (
         <p className="text-xs text-muted-foreground">{override.length.toLocaleString("en-US")} characters · Reload to apply</p>
       ) : null}
@@ -405,9 +434,6 @@ function TokenReplaceBubble() {
   const setFlag = useStudio((s) => s.setFlag);
   return (
     <>
-      <p className="max-w-lg text-sm text-muted-foreground">
-        Swap text in replies, one <span className="font-mono text-foreground">{"{old : new}"}</span> pair per line.
-      </p>
       <div className="space-y-2">
         <Label htmlFor="replaceReasoning">Reasoning</Label>
         <Textarea
