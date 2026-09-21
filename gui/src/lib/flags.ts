@@ -1,6 +1,14 @@
 export type EngineKind = "lm" | "vlm" | "embed" | "tts" | "stt" | "rerank" | "image";
 export type FlagType = "number" | "text" | "bool" | "select";
-export type FlagGroup = "server" | "sampling" | "thinking" | "template" | "replace";
+export type FlagGroup =
+  | "server"
+  | "sampling"
+  | "thinking"
+  | "template"
+  | "replace"
+  | "cache"
+  | "performance"
+  | "misc";
 
 export type FlagDef = {
   key: string;
@@ -36,7 +44,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Websites allowed to call this model. * allows all.",
     type: "text",
     engines: ["lm"],
-    group: "server",
+    group: "misc",
     default: "*",
   },
   {
@@ -154,6 +162,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "LoRA adapter folder. Leave empty if unused.",
     type: "text",
     engines: ["lm", "vlm"],
+    group: "performance",
     advanced: true,
     default: "",
   },
@@ -164,6 +173,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "A smaller companion model that speeds up generation.",
     type: "text",
     engines: ["lm", "vlm"],
+    group: "performance",
     advanced: true,
     default: "",
   },
@@ -174,6 +184,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Draft tokens proposed per step.",
     type: "number",
     engines: ["lm"],
+    group: "performance",
     advanced: true,
     min: 1,
     max: 16,
@@ -197,6 +208,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Extra template options as JSON.",
     type: "text",
     engines: ["lm"],
+    group: "misc",
     advanced: true,
     default: "",
   },
@@ -217,6 +229,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Allow custom code bundled with the model.",
     type: "bool",
     engines: ["lm", "vlm", "embed", "tts", "stt", "rerank", "image"],
+    group: "misc",
     advanced: true,
     default: false,
   },
@@ -226,6 +239,7 @@ export const FLAG_DEFS: FlagDef[] = [
     label: "Log level",
     help: "How much detail the log shows. DEBUG logs every generated token.",
     type: "select",
+    group: "misc",
     engines: ["lm", "vlm", "embed", "tts", "stt", "rerank", "image"],
     advanced: true,
     options: [
@@ -243,6 +257,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "How many replies can generate at once.",
     type: "number",
     engines: ["lm"],
+    group: "performance",
     advanced: true,
     min: 1,
     max: 128,
@@ -256,6 +271,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "How many prompts can process at once.",
     type: "number",
     engines: ["lm"],
+    group: "performance",
     advanced: true,
     min: 1,
     max: 64,
@@ -269,6 +285,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "How much of the prompt is read per step.",
     type: "number",
     engines: ["lm", "vlm"],
+    group: "performance",
     advanced: true,
     min: 64,
     max: 8192,
@@ -282,6 +299,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "How many conversations to keep cached.",
     type: "number",
     engines: ["lm"],
+    group: "cache",
     advanced: true,
     min: 0,
     max: 64,
@@ -295,6 +313,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Use pipeline parallelism across GPUs.",
     type: "bool",
     engines: ["lm"],
+    group: "performance",
     advanced: true,
     default: false,
   },
@@ -305,6 +324,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "How many images to keep cached.",
     type: "number",
     engines: ["vlm"],
+    group: "cache",
     advanced: true,
     min: 0,
     max: 128,
@@ -320,7 +340,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Reuse KV prefixes across requests (mlx-vlm APC). Edge sets APC_ENABLED=1 on Serve.",
     type: "bool",
     engines: ["vlm"],
-    group: "server",
+    group: "cache",
     edge: true,
     default: false,
   },
@@ -333,7 +353,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Tokens hashed per prefix-cache block.",
     type: "number",
     engines: ["vlm"],
-    group: "server",
+    group: "cache",
     edge: true,
     min: 8,
     max: 64,
@@ -346,10 +366,10 @@ export const FLAG_DEFS: FlagDef[] = [
     envVar: "APC_NUM_BLOCKS",
     feature: "apc",
     label: "Cache pool",
-    help: "Shared prefix-cache pool capacity in blocks. 2048 blocks × 16 tokens ≈ 32k tokens. Applies with Reload.",
+    help: "Shared prefix-cache pool capacity in blocks. Applies with Reload.",
     type: "number",
     engines: ["vlm"],
-    group: "server",
+    group: "cache",
     edge: true,
     min: 128,
     max: 16384,
@@ -377,6 +397,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Compress the prompt cache. Empty is off.",
     type: "text",
     engines: ["vlm"],
+    group: "cache",
     advanced: true,
     default: "",
   },
@@ -387,6 +408,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Compression group size.",
     type: "number",
     engines: ["vlm"],
+    group: "cache",
     advanced: true,
     min: 8,
     max: 128,
@@ -400,6 +422,7 @@ export const FLAG_DEFS: FlagDef[] = [
     help: "Prompt cache size cap. Empty is unlimited.",
     type: "text",
     engines: ["vlm"],
+    group: "cache",
     advanced: true,
     default: "",
   },
