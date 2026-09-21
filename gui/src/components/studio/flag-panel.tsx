@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Lock, RefreshCw, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Collapsible } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
@@ -9,7 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { engineLabel } from "@/lib/command";
 import { fetchTemplate, modelIsLive, postHubDelete } from "@/lib/edge-api";
-import { flagsDirty, flagsFor, type EngineKind, type FlagDef, type FlagGroup } from "@/lib/flags";
+import { flagsDirty, flagsFor, type EngineKind, type FlagDef } from "@/lib/flags";
 import { flagKey, formatContext, loadTarget, modelOrigin, type ModelRec } from "@/lib/models";
 import { useStudio } from "@/lib/studio-store";
 import { cn } from "@/lib/utils";
@@ -24,13 +25,17 @@ const SPECIAL_BLURB: Partial<Record<EngineKind, string>> = {
   image: " This model generates images." + SEE_ENDPOINT,
 };
 
-const GROUP_LABEL: Record<FlagGroup, string> = {
-  server: "Server",
-  sampling: "Sampling",
-  thinking: "Thinking",
-  template: "Chat template",
-  replace: "Token replace",
-};
+/** "2048 blocks × 16 tokens ≈ 32k tokens." — computed from the live slider values. */
+function apcCapacity(blocks: number, blockSize: number): string {
+  const tokens = Math.max(0, Math.round(blocks * blockSize));
+  const approx =
+    tokens >= 1024
+      ? ` ≈ ${Math.round(tokens / 1024)}k tokens`
+      : tokens > 0
+        ? ` ≈ ${tokens} tokens`
+        : "";
+  return `${blocks.toLocaleString("en-US")} blocks × ${blockSize} tokens = ${tokens.toLocaleString("en-US")} tokens${approx}.`;
+}
 
 export function FlagPanel() {
   const model = useStudio((s) => s.selected());
@@ -51,14 +56,19 @@ export function FlagPanel() {
   const featureOk = (def: FlagDef) => !def.feature || (features ?? []).includes(def.feature);
   const visible = flagsFor(model.engine, false).filter(featureOk);
   const extra = flagsFor(model.engine, true).filter(featureOk);
-  const groups: FlagGroup[] = ["server", "sampling", "thinking"];
+  const inGroup = (group: FlagDef["group"]) => [...visible, ...extra].filter((d) => d.group === group);
+  const samplingDefs = inGroup("sampling");
+  const thinkingDefs = inGroup("thinking");
+  const cacheDefs = inGroup("cache");
+  const performanceDefs = inGroup("performance");
+  const miscDefs = inGroup("misc");
   const live = modelIsLive(served, model);
   const loaded = served.find((row) => modelIsLive([row], model));
   const dirty = Boolean(live && flagsDirty(model.engine, flags, loaded?.flags, features));
   const apcHidden = model.engine === "vlm" && Array.isArray(features) && !features.includes("apc");
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-8">
+    <div className="mx-auto w-full max-w-3xl space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-medium tracking-tight">Engine switches</h2>
@@ -101,31 +111,89 @@ export function FlagPanel() {
         </div>
       </div>
       {model.engine === "lm" || model.engine === "vlm" ? (
-        <PlaygroundSampling engine={model.engine} hasReason={Boolean(model.features?.reason)} apcHidden={apcHidden} />
+        <Collapsible
+          title="Playground"
+          hint="These settings only affect the Playground. Client requests must set their own settings."
+        >
+          <PlaygroundSampling engine={model.engine} hasReason={Boolean(model.features?.reason)} apcHidden={apcHidden} />
+        </Collapsible>
       ) : null}
-      <EngineCard />
-      {model.engine === "lm" ? <TemplateCard /> : null}
-      {model.engine === "lm" || model.engine === "vlm" ? <TokenReplaceCard /> : null}
-      <DeleteModelCard />
-      {groups.map((group) => {
-        const defs = visible.filter((d) => (d.group ?? "server") === group);
-        if (defs.length === 0) return null;
-        return (
-          <section key={group} className="space-y-4">
-            <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-              {GROUP_LABEL[group]}
-            </h3>
-            <FlagGrid defs={defs} values={flags} onChange={setFlag} models={models} current={model} />
-          </section>
-        );
-      })}
-      {extra.length ? (
-        <section className="space-y-4">
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Advanced</h3>
-          <FlagGrid defs={extra} values={flags} onChange={setFlag} models={models} current={model} />
-        </section>
+      <Collapsible
+        title="Engine"
+        hint={`Detected ${engineLabel(model.detectedEngine ?? model.engine)} from the model files. Change this only if the model misbehaves.`}
+      >
+        <EngineBubble />
+      </Collapsible>
+      {samplingDefs.length ? (
+        <Collapsible
+          title="Sampling"
+          hint="Defaults used when a client request does not set its own sampling settings."
+        >
+          <FlagGrid defs={samplingDefs} values={flags} onChange={setFlag} models={models} current={model} />
+        </Collapsible>
       ) : null}
+      {thinkingDefs.length ? (
+        <Collapsible title="Thinking" hint="How reasoning models expose and spend their thinking.">
+          <FlagGrid defs={thinkingDefs} values={flags} onChange={setFlag} models={models} current={model} />
+        </Collapsible>
+      ) : null}
+      {cacheDefs.length ? (
+        <Collapsible
+          title="Cache"
+          hint={
+            model.engine === "vlm"
+              ? "Prefix caching keeps reused prompt prefixes in memory across requests."
+              : "How many conversations stay cached between requests."
+          }
+          footer={<CacheFooter engine={model.engine} />}
+        >
+          <FlagGrid defs={cacheDefs} values={flags} onChange={setFlag} models={models} current={model} />
+        </Collapsible>
+      ) : null}
+      {model.engine === "lm" ? <TemplateBubble /> : null}
+      {model.engine === "lm" || model.engine === "vlm" ? <TokenReplaceBubble /> : null}
+      {performanceDefs.length ? (
+        <Collapsible
+          title="Performance"
+          hint="Throughput, speculative decoding and LoRA adapters."
+        >
+          <FlagGrid defs={performanceDefs} values={flags} onChange={setFlag} models={models} current={model} />
+        </Collapsible>
+      ) : null}
+      {miscDefs.length ? (
+        <Collapsible title="Miscellaneous" hint="Everything else.">
+          <FlagGrid defs={miscDefs} values={flags} onChange={setFlag} models={models} current={model} />
+        </Collapsible>
+      ) : null}
+      <DeleteModelBubble />
     </div>
+  );
+}
+
+/**
+ * Live summary at the bottom of the Cache bubble. Recomputes from the current
+ * slider values: vlm shows the prefix-cache pool capacity (blocks × block
+ * size), lm shows how many conversations the prompt cache keeps.
+ */
+function CacheFooter({ engine }: { engine: EngineKind }) {
+  const flags = useStudio((s) => s.flags);
+  return (
+    <p className="mt-4 rounded-xl bg-secondary px-3 py-2.5 text-xs text-muted-foreground">
+      {engine === "vlm" ? (
+        <>
+          <span className="font-medium text-foreground">Prefix cache capacity:</span>{" "}
+          {apcCapacity(Number(flags.apcCacheBlocks ?? 2048), Number(flags.apcBlockSize ?? 16))}
+          {(flags.apcEnabled ?? false) === true
+            ? " Enabled on the next Serve or Reload."
+            : " Enable Prefix cache to use it."}
+        </>
+      ) : (
+        <>
+          <span className="font-medium text-foreground">Prompt cache:</span>{" "}
+          {Number(flags.promptCacheSize ?? 10)} conversations kept across requests. Applies with Reload.
+        </>
+      )}
+    </p>
   );
 }
 
@@ -152,22 +220,14 @@ function PlaygroundSampling({
   const effort = String(flags.reasoningEffort ?? "");
 
   return (
-    <section className="space-y-4 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
-      <div>
-        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-          Playground
-        </h3>
-        <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-          These settings only affect the Playground. Client requests must set their own settings.
+    <>
+      {engine === "vlm" && apcHidden ? (
+        <p className="max-w-lg text-sm text-muted-foreground">
+          Prompt caching (APC) needs a newer mlx-vlm — the installed engine does not advertise it.
+          Overlay the engine with <span className="font-mono text-foreground">mlx-edge build vlm</span>,
+          then restart Edge to get the Prefix cache switches.
         </p>
-        {engine === "vlm" && apcHidden ? (
-          <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-            Prompt caching (APC) needs a newer mlx-vlm — the installed engine does not advertise it.
-            Overlay the engine with <span className="font-mono text-foreground">mlx-edge build vlm</span>,
-            then restart Edge to get the Prefix cache switches.
-          </p>
-        ) : null}
-      </div>
+      ) : null}
       {engine === "vlm" ? (
         <div className="grid gap-5 sm:grid-cols-2">
           <div className="space-y-2">
@@ -218,20 +278,18 @@ function PlaygroundSampling({
           <p className="text-xs text-muted-foreground">Reasoning depth for Playground replies.</p>
         </div>
       ) : null}
-    </section>
+    </>
   );
 }
 
-function EngineCard() {
+function EngineBubble() {
   const model = useStudio((s) => s.selected());
   const engineByModel = useStudio((s) => s.engineByModel);
   const setEngineOverride = useStudio((s) => s.setEngineOverride);
-  const served = useStudio((s) => s.served);
 
   if (!model) return null;
   const detected = model.detectedEngine ?? model.engine;
   const override = engineByModel[flagKey(model)];
-  const live = modelIsLive(served, model);
   const options: { value: EngineKind | null; label: string }[] = [
     { value: null, label: `Auto (${engineLabel(detected)})` },
     { value: "lm", label: "mlx-lm" },
@@ -244,15 +302,7 @@ function EngineCard() {
   ];
 
   return (
-    <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
-      <div>
-        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Engine</h3>
-        <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-          Detected {engineLabel(detected)} from the model files. Change this only if the model
-          misbehaves.
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Engine">
+    <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Engine">
         {options.map((opt) => {
           const selected = opt.value === null ? !override : override === opt.value;
           return (
@@ -273,12 +323,11 @@ function EngineCard() {
             </button>
           );
         })}
-      </div>
-    </section>
+    </div>
   );
 }
 
-function TemplateCard() {
+function TemplateBubble() {
   const model = useStudio((s) => s.selected());
   const flags = useStudio((s) => s.flags);
   const setFlag = useStudio((s) => s.setFlag);
@@ -309,16 +358,13 @@ function TemplateCard() {
   }
 
   return (
-    <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
+    <>
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Chat template</h3>
-          <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-            {bundled
-              ? "This model ships with its own chat template."
-              : "This model has no chat template — Edge fetches one from Hugging Face on Serve."}
-          </p>
-        </div>
+        <p className="max-w-lg text-sm text-muted-foreground">
+          {bundled
+            ? "This model ships with its own chat template."
+            : "This model has no chat template — Edge fetches one from Hugging Face on Serve."}
+        </p>
         <Button type="button" variant="secondary" size="sm" disabled={busy} onClick={() => void pull()}>
           {busy ? "Pulling…" : "Pull from Hugging Face"}
         </Button>
@@ -350,21 +396,18 @@ function TemplateCard() {
       {override ? (
         <p className="text-xs text-muted-foreground">{override.length.toLocaleString("en-US")} characters · Reload to apply</p>
       ) : null}
-    </section>
+    </>
   );
 }
 
-function TokenReplaceCard() {
+function TokenReplaceBubble() {
   const flags = useStudio((s) => s.flags);
   const setFlag = useStudio((s) => s.setFlag);
   return (
-    <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
-      <div>
-        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Token replace</h3>
-        <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-          Swap text in replies, one <span className="font-mono text-foreground">{"{old : new}"}</span> pair per line.
-        </p>
-      </div>
+    <>
+      <p className="max-w-lg text-sm text-muted-foreground">
+        Swap text in replies, one <span className="font-mono text-foreground">{"{old : new}"}</span> pair per line.
+      </p>
       <div className="space-y-2">
         <Label htmlFor="replaceReasoning">Reasoning</Label>
         <Textarea
@@ -385,11 +428,11 @@ function TokenReplaceCard() {
           className="min-h-20 font-mono text-xs"
         />
       </div>
-    </section>
+    </>
   );
 }
 
-function DeleteModelCard() {
+function DeleteModelBubble() {
   const model = useStudio((s) => s.selected());
   const served = useStudio((s) => s.served);
   const lockedByModel = useStudio((s) => s.lockedByModel);
@@ -434,12 +477,9 @@ function DeleteModelCard() {
           : "Delete the folder on disk, then Rescan.";
 
   return (
-    <section className="space-y-3 rounded-2xl bg-card px-4 py-4 shadow-[var(--shadow-border)]">
+    <>
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Delete model</h3>
-          <p className="mt-1 max-w-lg text-sm text-muted-foreground">{copy}</p>
-        </div>
+        <p className="max-w-lg text-sm text-muted-foreground">{copy}</p>
         <div className="flex shrink-0 items-center gap-2 pt-0.5">
           <Lock className={cn("size-3.5", locked ? "text-foreground" : "text-muted-foreground")} />
           <Switch
@@ -477,7 +517,7 @@ function DeleteModelCard() {
           ) : null}
         </div>
       ) : null}
-    </section>
+    </>
   );
 }
 
